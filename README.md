@@ -175,6 +175,25 @@ cargo run --locked --example macos_icon -- target/AppIcon.iconset
 iconutil -c icns target/AppIcon.iconset -o packaging/macos/AppIcon.icns
 ```
 
+## Windows 打包
+
+在 Windows 上安装 Rust MSVC 工具链、Visual Studio C++ Build Tools（含 Windows SDK）和 [NSIS](https://nsis.sourceforge.io/) 后，在 PowerShell 中运行：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\package-windows.ps1
+```
+
+脚本使用当前工作区构建 release 版本，同时生成 `dist/Take-a-Panel-0.1.0-windows-x86_64-setup.exe` 安装程序和 `dist/Take-a-Panel-0.1.0-windows-x86_64.zip` 便携包（版本和架构以实际构建结果为准）。安装程序无需管理员权限，安装到当前用户目录并添加开始菜单快捷方式，可通过 Windows“已安装的应用”卸载；卸载保留用户设置和索引。便携包解压后运行 `Take a Panel/take-a-panel.exe`。切换或卸载版本前请从托盘菜单退出旧程序。安装版和开发版使用同一后台实例与设置；移动便携程序后如果启用了开机自启，需要重新关闭并启用一次。
+
+可指定目标架构和输出目录：
+
+```powershell
+rustup target add aarch64-pc-windows-msvc
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\package-windows.ps1 -Target aarch64-pc-windows-msvc -Output dist\arm64
+```
+
+默认使用 Cargo 的默认目标；构建其他架构还需要对应的 MSVC 编译工具。上述命令只为本次 PowerShell 进程绕过脚本执行策略，不修改系统设置。安装程序和便携包均未进行代码签名。
+
 ### Linux 系统依赖
 
 Arch Linux 可以从 Git 源码构建并安装软件包（需要先安装 `base-devel`）：
@@ -249,7 +268,7 @@ scripts/package-macos.sh macOS 应用构建、签名和 ZIP 打包
 packaging/macos/     应用 Info.plist 模板与 ICNS 图标
 ```
 
-暂未实现拼音搜索、使用历史及 Windows 安装包；应用发现覆盖上述标准注册位置，不扫描整块磁盘中的便携程序或 macOS 自定义应用目录。
+暂未实现拼音搜索；应用发现覆盖上述标准注册位置，不扫描整块磁盘中的便携程序或 macOS 自定义应用目录。
 
 技术参考：[Slint 窗口与 Winit 集成](https://docs.slint.dev/latest/docs/rust/slint/winit_030/)、[global-hotkey 平台支持](https://docs.rs/global-hotkey/0.8.0/global_hotkey/)、[Desktop Entry 规范](https://specifications.freedesktop.org/desktop-entry/latest-single/)、[Microsoft Get-StartApps](https://learn.microsoft.com/en-us/powershell/module/startlayout/get-startapps)。
 
