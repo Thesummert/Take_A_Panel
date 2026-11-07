@@ -1,5 +1,6 @@
 use anyhow::{Context, Result, bail};
 use global_hotkey::hotkey::HotKey;
+use std::collections::BTreeMap;
 use std::{io::Write, path::PathBuf};
 
 pub fn directory() -> Result<PathBuf> {
@@ -50,6 +51,7 @@ pub fn cache_directory() -> Result<PathBuf> {
     bail!("无法确定索引缓存目录")
 }
 
+#[derive(Clone)]
 pub struct Settings {
     directory: PathBuf,
 }
@@ -88,6 +90,19 @@ impl Settings {
     pub fn save_file_search_roots(&self, value: &str) -> Result<()> {
         self.save_text("file-search-roots", value)
             .context("无法保存文件索引范围")
+    }
+
+    pub fn load_launch_counts(&self) -> Result<BTreeMap<String, u64>> {
+        match std::fs::read_to_string(self.directory.join("launch-counts.json")) {
+            Ok(value) => serde_json::from_str(&value).context("启动次数记录格式错误"),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(BTreeMap::new()),
+            Err(error) => Err(error).context("无法读取启动次数记录"),
+        }
+    }
+
+    pub fn save_launch_counts(&self, counts: &BTreeMap<String, u64>) -> Result<()> {
+        self.save_text("launch-counts.json", &serde_json::to_string(counts)?)
+            .context("无法保存启动次数记录")
     }
 
     fn save_text(&self, name: &str, value: &str) -> Result<()> {

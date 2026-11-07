@@ -7,6 +7,7 @@ mod client;
 mod clipboard;
 mod file_search;
 mod icons;
+mod launch_history;
 #[cfg(any(target_os = "linux", test))]
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 mod linux_file_picker;
@@ -47,7 +48,7 @@ enum WorkerEvent {
     Catalog(apps::Catalog),
     Icons(Vec<(usize, icons::IconData)>),
     ScanFinished,
-    Launched(Result<(), String>),
+    Launched(Result<launch_history::History, String>),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -60,6 +61,7 @@ enum ResultTarget {
 struct Controller {
     ui: slint::Weak<LauncherWindow>,
     apps: RefCell<Vec<apps::Application>>,
+    launch_history: RefCell<launch_history::History>,
     matches: RefCell<Vec<ResultTarget>>,
     clipboard: RefCell<clipboard::History>,
     clipboard_matches: RefCell<Vec<clipboard::Entry>>,
@@ -77,8 +79,15 @@ struct Controller {
 impl Controller {
     fn new(ui: &LauncherWindow, hotkey_notice: String, focus: Arc<WindowFocus>) -> Rc<Self> {
         let files = file_search::Controller::new(ui, focus.clone());
+        let history = match settings::directory() {
+            Ok(directory) => launch_history::History::load(directory),
+            Err(error) => {
+                eprintln!("无法保存应用启动次数：{error:#}");
+                launch_history::History::default()
+            }
+        };
         {
-            let controller = Self::with_files(ui, hotkey_notice, focus, files);
+            let controller = Self::with_files(ui, hotkey_notice, focus, files, history);
             *controller.clipboard.borrow_mut() = clipboard::History::start();
             controller
         }
@@ -89,11 +98,13 @@ impl Controller {
         hotkey_notice: String,
         focus: Arc<WindowFocus>,
         files: Rc<file_search::Controller>,
+        history: launch_history::History,
     ) -> Rc<Self> {
         let (sender, receiver) = mpsc::channel();
         let controller = Rc::new(Self {
             ui: ui.as_weak(),
             apps: RefCell::new(Vec::new()),
+            launch_history: RefCell::new(history),
             matches: RefCell::new(Vec::new()),
             clipboard: RefCell::new(clipboard::History::default()),
             clipboard_matches: RefCell::new(Vec::new()),
@@ -152,7 +163,11 @@ impl Controller {
         }
         ui.set_results(ModelRc::from(self.rows.clone()));
         let apps = self.apps.borrow();
-        let mut matches = search::search(&apps, query)
+        let mut indices = search::search(&apps, query);
+        if query.trim().is_empty() {
+            self.launch_history.borrow().sort(&apps, &mut indices);
+        }
+        let mut matches = indices
             .into_iter()
             .map(ResultTarget::App)
             .collect::<Vec<_>>();
@@ -354,8 +369,13 @@ impl Controller {
         } else {
             apps::LaunchMode::Normal
         };
+        let mut history = self.launch_history.borrow().clone();
         std::thread::spawn(move || {
             let result = apps::launch(&app, mode)
+                .map(|()| {
+                    history.record(&app);
+                    history
+                })
                 .map_err(|error| format!("无法打开 {}：{error:#}", app.name));
             let _ = sender.send(WorkerEvent::Launched(result));
         });
@@ -406,10 +426,16 @@ impl Controller {
                         }
                         WorkerEvent::Launched(result) => {
                             ui.set_launching(false);
-                            if let Err(error) = result {
-                                eprintln!("{error}");
-                                present(&ui, false, &controller.focus);
-                                ui.set_error_message(error.into());
+                            match result {
+                                Ok(history) => {
+                                    *controller.launch_history.borrow_mut() = history;
+                                    controller.update_results(ui.get_query().as_str());
+                                }
+                                Err(error) => {
+                                    eprintln!("{error}");
+                                    present(&ui, false, &controller.focus);
+                                    ui.set_error_message(error.into());
+                                }
                             }
                         }
                     }
@@ -858,7 +884,13 @@ mod tests {
         let focus = Arc::default();
         let files =
             file_search::Controller::with_settings(ui, Arc::clone(&focus), Ok(settings.to_owned()));
-        Controller::with_files(ui, String::new(), focus, files)
+        Controller::with_files(
+            ui,
+            String::new(),
+            focus,
+            files,
+            launch_history::History::load(settings.to_owned()),
+        )
     }
 
     #[test]
@@ -960,5 +992,42 @@ mod tests {
         assert_eq!(row.name, "Alpha");
         assert!(row.has_icon);
         assert_eq!(row.icon.to_rgba8().unwrap().as_bytes(), &[255, 0, 0, 255]);
+    }
+
+    #[test]
+    fn default_rows_use_saved_counts_while_search_keeps_relevance_and_icon_mapping() {
+        i_slint_backend_testing::init_no_event_loop();
+        let dir = file_search::test_support::TempDir::new();
+        let apps: Vec<_> = ["Code", "Code Studio", "Other"]
+            .into_iter()
+            .map(|name| apps::Application {
+                name: name.into(),
+                detail: String::new(),
+                keywords: String::new(),
+                icon_name: None,
+                target: apps::LaunchTarget::File(format!("/apps/{name}").into()),
+            })
+            .collect();
+        let mut history = launch_history::History::load(dir.0.clone());
+        history.record(&apps[1]);
+        let ui = LauncherWindow::new().unwrap();
+        let controller = controller(&ui, &dir.0);
+        *controller.apps.borrow_mut() = apps;
+        *controller.icons.borrow_mut() = vec![slint::Image::default(); 3];
+        controller.update_results("  ");
+        assert_eq!(controller.rows.row_data(0).unwrap().name, "Code Studio");
+        assert!(controller.matches.borrow()[0] == ResultTarget::App(1));
+        controller.apply_icons(vec![(
+            1,
+            icons::IconData {
+                pixels: slint::SharedPixelBuffer::clone_from_slice(&[0, 0, 255, 255], 1, 1),
+                premultiplied: false,
+            },
+        )]);
+        assert!(controller.rows.row_data(0).unwrap().has_icon);
+        assert!(!controller.rows.row_data(1).unwrap().has_icon);
+        controller.update_results("code");
+        assert_eq!(controller.rows.row_data(0).unwrap().name, "Code");
+        assert_eq!(controller.rows.row_data(1).unwrap().name, "Code Studio");
     }
 }
