@@ -22,7 +22,7 @@ libc = "0.2"
 plist = "1"
 objc2 = "0.6"
 objc2-app-kit = { version = "0.3", default-features = false, features = ["NSWorkspace", "NSImage", "NSImageRep", "NSBitmapImageRep", "NSGraphicsContext", "objc2-core-graphics"] }
-objc2-foundation = { version = "0.3", default-features = false, features = ["NSString", "NSData", "NSDictionary", "NSGeometry"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["NSAppleEventDescriptor", "NSAppleEventManager", "NSString", "NSData", "NSDictionary", "NSGeometry"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 freedesktop-icons = "0.4"

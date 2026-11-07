@@ -3,6 +3,8 @@
 mod apps;
 mod client;
 mod icons;
+#[cfg(target_os = "macos")]
+mod macos_app;
 mod options;
 mod search;
 mod server;
@@ -399,6 +401,15 @@ fn run_server(options: Options, mut server: server::Server) -> Result<()> {
     let ui = LauncherWindow::new()?;
     shortcut_recorder::bind(&ui);
     let focus = Arc::new(WindowFocus::default());
+    #[cfg(target_os = "macos")]
+    let _reopen_handler = {
+        let weak = ui.as_weak();
+        let reopen_focus = focus.clone();
+        macos_app::install(move || {
+            let focus = reopen_focus.clone();
+            let _ = weak.upgrade_in_event_loop(move |ui| present(&ui, true, &focus));
+        })?
+    };
     let (hotkey_manager, hotkey_notice) = register_hotkey(&ui, &options, focus.clone());
     let has_hotkey = hotkey_manager.borrow().enabled();
     ui.set_configured_hotkey(options.hotkey.as_str().into());

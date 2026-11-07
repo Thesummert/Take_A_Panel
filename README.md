@@ -84,6 +84,47 @@ Wayland 可在桌面的自定义快捷键设置中绑定 `take-a-panel --toggle`
 
 server 通过当前用户的文件锁保证单实例，使用带凭据的本机回环连接传递控制命令，空闲时不轮询。异常退出后文件锁会自动释放，下次运行可重新启动。运行文件和后台日志位于 macOS 的 `~/Library/Caches/TakeAPanel/runtime`、Windows 的 `%LOCALAPPDATA%/TakeAPanel/runtime`，Linux 优先使用 `$XDG_RUNTIME_DIR/take-a-panel`，其次使用用户缓存目录。可通过 `TAKE_A_PANEL_RUNTIME_DIR` 指定独立目录；自动启动失败时查看目录下的 `server.log`。
 
+## macOS `.app` 打包
+
+在 macOS 上安装 Rust 和 Xcode Command Line Tools 后运行：
+
+```sh
+./scripts/package-macos.sh
+```
+
+脚本会构建 release 可执行文件，打包应用图标、版本信息和许可证，完成本地签名与签名校验，生成：
+
+```text
+dist/Take a Panel.app
+dist/Take-a-Panel-0.1.0-macos-arm64.zip
+```
+
+文件名中的版本自动读取 `Cargo.toml`；默认架构取决于 Cargo 的构建目标，Intel 版本的压缩包后缀为 `x86_64`。可以将 `.app` 拖入“应用程序”目录，然后双击打开；再次打开会唤出面板。应用仍常驻 P 状态栏，不占用 Dock。安装版与 `cargo run` 使用同一后台实例和设置；切换到新版本前，请先从 P 菜单退出旧后台程序。
+
+支持指定架构、合并为 Universal 应用，以及自定义输出目录：
+
+```sh
+# Apple Silicon
+./scripts/package-macos.sh --target aarch64-apple-darwin
+
+# Intel，需要先安装对应 Rust 标准库
+rustup target add x86_64-apple-darwin
+./scripts/package-macos.sh --target x86_64-apple-darwin
+
+# 同时包含 Apple Silicon 和 Intel
+rustup target add aarch64-apple-darwin x86_64-apple-darwin
+./scripts/package-macos.sh --target universal --output dist/universal
+```
+
+最低系统版本默认为 macOS 11.0，可通过 `MACOSX_DEPLOYMENT_TARGET` 调整。默认使用临时签名，适合本机运行；对外分发可用 `--identity 'Developer ID Application: 名称 (TEAMID)'` 或 `MACOS_SIGNING_IDENTITY` 指定证书，脚本会启用 hardened runtime 和签名时间戳。Apple 公证需另外完成。
+
+应用图标复用现有 P 图标。修改 `ui/assets/tray-p.svg` 后，可重新生成打包资源：
+
+```sh
+cargo run --locked --example macos_icon -- target/AppIcon.iconset
+iconutil -c icns target/AppIcon.iconset -o packaging/macos/AppIcon.icns
+```
+
 ### Linux 系统依赖
 
 Ubuntu / Debian：
@@ -117,6 +158,7 @@ macOS 上 `cargo test --locked` 还会在主线程运行原生快捷键回归测
 
 ```text
 src/main.rs          窗口生命周期、全局快捷键、后台任务、交互绑定
+src/macos_app.rs     macOS Finder 再次打开应用时唤出面板
 src/client.rs        server 检测、后台启动与命令转发
 src/server.rs        单实例文件锁、本地 IPC 与生命周期
 src/options.rs       server / 客户端命令行选项
@@ -131,9 +173,11 @@ src/apps/linux.rs    Linux Desktop Entry 发现与启动
 ui/launcher.slint    暗色圆角界面
 ui/tray.slint        P 状态栏图标与菜单
 ui/settings.slint    设置导航与快捷键设置页
+scripts/package-macos.sh macOS 应用构建、签名和 ZIP 打包
+packaging/macos/     应用 Info.plist 模板与 ICNS 图标
 ```
 
-暂未实现开机自启、拼音搜索、使用历史及安装包；应用发现覆盖上述标准注册位置，不扫描整块磁盘中的便携程序或 macOS 自定义应用目录。
+暂未实现开机自启、拼音搜索、使用历史及 Windows / Linux 安装包；应用发现覆盖上述标准注册位置，不扫描整块磁盘中的便携程序或 macOS 自定义应用目录。
 
 技术参考：[Slint 窗口与 Winit 集成](https://docs.slint.dev/latest/docs/rust/slint/winit_030/)、[global-hotkey 平台支持](https://docs.rs/global-hotkey/0.8.0/global_hotkey/)、[Desktop Entry 规范](https://specifications.freedesktop.org/desktop-entry/latest-single/)、[Microsoft Get-StartApps](https://learn.microsoft.com/en-us/powershell/module/startlayout/get-startapps)。
 
