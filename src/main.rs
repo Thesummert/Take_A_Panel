@@ -1,8 +1,13 @@
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 
+mod appearance;
 mod apps;
+mod autostart;
 mod client;
 mod icons;
+#[cfg(any(target_os = "linux", test))]
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+mod linux_file_picker;
 #[cfg(target_os = "macos")]
 mod macos_app;
 mod options;
@@ -30,19 +35,10 @@ use window_focus::WindowFocus;
 
 slint::include_modules!();
 
-fn background_image(path: &str, blur: f32) -> Result<slint::Image> {
-    if path.is_empty() {
-        return Ok(slint::Image::default());
-    }
-    let image = image::open(path)?.thumbnail(1320, 1056).to_rgba8();
-    let image = if blur > 0.0 {
-        image::imageops::blur(&image, blur)
-    } else {
-        image
-    };
-    Ok(slint::Image::from_rgba8(
-        slint::SharedPixelBuffer::clone_from_slice(image.as_raw(), image.width(), image.height()),
-    ))
+thread_local! {
+    // Native context creation may fail inside a show callback, rather than the
+    // event loop itself. Preserve that error for the process-level retry.
+    static WINDOW_RENDER_ERROR: RefCell<Option<slint::PlatformError>> = const { RefCell::new(None) };
 }
 
 enum WorkerEvent {
@@ -292,6 +288,8 @@ fn present(ui: &LauncherWindow, reset: bool, focus: &WindowFocus) {
     ui.window().set_minimized(false);
     if let Err(error) = ui.show() {
         eprintln!("无法显示窗口: {error}");
+        WINDOW_RENDER_ERROR.with_borrow_mut(|pending| *pending = Some(error));
+        let _ = slint::quit_event_loop();
         return;
     }
     ui.invoke_focus_search();
@@ -394,13 +392,30 @@ fn main() -> Result<()> {
         server::wait_request(&directory, server::Command::Ping, Duration::from_secs(15))?;
         return Ok(());
     };
-    run_server(options, server)
+    match run_server(options, server) {
+        Err(error)
+            if error.downcast_ref::<slint::PlatformError>().is_some()
+                && std::env::var_os("TAKE_A_PANEL_SOFTWARE_RETRY").is_none() =>
+        {
+            // A GL context can fail when the window is first shown, after backend
+            // selection. Slint's global backend cannot be replaced in-process.
+            // run_server has dropped its server lock; retry in a fresh process.
+            eprintln!("图形初始化失败，使用软件渲染重试：{error:#}");
+            let status = std::process::Command::new(std::env::current_exe()?)
+                .args(std::env::args_os().skip(1))
+                .env("SLINT_BACKEND", "winit-software")
+                .env("TAKE_A_PANEL_SOFTWARE_RETRY", "1")
+                .status()?;
+            anyhow::ensure!(status.success(), "软件渲染进程退出：{status}");
+            Ok(())
+        }
+        result => result,
+    }
 }
 
 fn run_server(options: Options, mut server: server::Server) -> Result<()> {
     let backend = slint::BackendSelector::new()
         .backend_name("winit".into())
-        .renderer_name("software".into())
         .with_winit_window_attributes_hook(|attributes| {
             attributes.with_transparent(true).with_resizable(false)
         });
@@ -415,55 +430,8 @@ fn run_server(options: Options, mut server: server::Server) -> Result<()> {
     backend.select()?;
     let ui = LauncherWindow::new()?;
     shortcut_recorder::bind(&ui);
-    if let Ok(dir) = settings::directory() {
-        if let Ok(data) = std::fs::read_to_string(dir.join("appearance")) {
-            let mut lines = data.lines();
-            if let (Some(opacity), Some(blur), Some(path)) =
-                (lines.next(), lines.next(), lines.next())
-            {
-                if let (Ok(opacity), Ok(blur)) = (opacity.parse::<f32>(), blur.parse::<f32>()) {
-                    if opacity.is_finite() && blur.is_finite() {
-                        let opacity = opacity.clamp(0.0, 1.0);
-                        let blur = blur.clamp(0.0, 30.0);
-                        if let Ok(image) = background_image(path, blur) {
-                            ui.set_background_image(image);
-                            ui.set_background_path(path.into());
-                            ui.set_background_opacity(opacity);
-                            ui.set_background_blur(blur);
-                        }
-                    }
-                }
-            }
-        }
-    }
-    let appearance_ui = ui.as_weak();
-    ui.on_save_appearance(move |path, opacity, blur| {
-        let Some(ui) = appearance_ui.upgrade() else {
-            return;
-        };
-        let result = (|| -> Result<slint::Image> {
-            let path = path.trim();
-            anyhow::ensure!(!path.contains(['\n', '\r']), "路径不能包含换行符");
-            let image = background_image(path, blur)?;
-            let dir = settings::directory()?;
-            std::fs::create_dir_all(&dir)?;
-            std::fs::write(
-                dir.join("appearance"),
-                format!("{opacity}\n{blur}\n{path}\n"),
-            )?;
-            Ok(image)
-        })();
-        ui.set_settings_failed(result.is_err());
-        match result {
-            Ok(image) => {
-                ui.set_background_image(image);
-                ui.set_settings_message("外观已保存。".into());
-            }
-            Err(error) => {
-                ui.set_settings_message(format!("保存外观失败：{error:#}").into());
-            }
-        }
-    });
+    appearance::bind(&ui);
+    autostart::bind(&ui);
     let focus = Arc::new(WindowFocus::default());
     #[cfg(target_os = "macos")]
     let _reopen_handler = {
@@ -479,7 +447,9 @@ fn run_server(options: Options, mut server: server::Server) -> Result<()> {
     let dialog_ui = ui.as_weak();
     let dialog_focus = focus.clone();
     ui.on_browse_background(move || {
-        dialog_flag.store(true, Ordering::Relaxed);
+        if dialog_flag.swap(true, Ordering::Relaxed) {
+            return;
+        }
         let flag = dialog_flag.clone();
         let weak = dialog_ui.clone();
         let focus = dialog_focus.clone();
@@ -488,20 +458,24 @@ fn run_server(options: Options, mut server: server::Server) -> Result<()> {
             let result = std::process::Command::new("osascript")
                 .args(["-e", "POSIX path of (choose file with prompt \"选择背景图片\" of type {\"public.png\", \"public.jpeg\"})"]).output();
             #[cfg(target_os = "linux")]
-            let result = std::process::Command::new("zenity")
-                .args(["--file-selection", "--title=选择背景图片", "--file-filter=图片 | *.png *.jpg *.jpeg *.PNG *.JPG *.JPEG"]).output();
+            let result = linux_file_picker::pick_background().map(|path| path.map(|p| p.to_string_lossy().into_owned()));
             #[cfg(target_os = "windows")]
             let result = std::process::Command::new("powershell")
                 .args(["-NoProfile", "-STA", "-Command", "Add-Type -AssemblyName System.Windows.Forms; $d = New-Object System.Windows.Forms.OpenFileDialog; $d.Filter = '图片|*.png;*.jpg;*.jpeg'; if ($d.ShowDialog() -eq 'OK') { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8; [Console]::Write($d.FileName) }"]).output();
+            #[cfg(not(target_os = "linux"))]
+            let result = result.map_err(anyhow::Error::from).map(|output| {
+                if output.status.success() {
+                    let path = String::from_utf8_lossy(&output.stdout);
+                    let path = path.trim_end_matches(['\r', '\n']);
+                    if !path.is_empty() { return Some(path.to_owned()); }
+                }
+                None
+            });
             let _ = weak.upgrade_in_event_loop(move |ui| {
                 focus.begin_presentation();
                 flag.store(false, Ordering::Relaxed);
                 match result {
-                    Ok(output) if output.status.success() => {
-                        let path = String::from_utf8_lossy(&output.stdout);
-                        let path = path.trim_end_matches(['\r', '\n']);
-                        if !path.is_empty() { ui.set_background_path(path.into()); }
-                    }
+                    Ok(Some(path)) => { ui.set_background_path(path.into()); }
                     Err(error) => {
                         ui.set_settings_failed(true);
                         ui.set_settings_message(format!("无法打开文件选择器：{error}").into());
@@ -611,6 +585,12 @@ fn run_server(options: Options, mut server: server::Server) -> Result<()> {
             return EventResult::PreventDefault;
         }
         if let winit::event::WindowEvent::Focused(focused) = event {
+            if *focused
+                && let Some(ui) = weak.upgrade()
+                && ui.get_settings_open()
+            {
+                ui.invoke_refresh_autostart();
+            }
             if !focused {
                 modifiers = winit::keyboard::ModifiersState::empty();
             }
@@ -642,6 +622,14 @@ fn run_server(options: Options, mut server: server::Server) -> Result<()> {
         if let Some(ui) = weak.upgrade() {
             ui.invoke_open_settings();
             present(&ui, false, &settings_focus);
+        }
+    });
+    let weak = ui.as_weak();
+    let startup_focus = focus.clone();
+    tray.on_autostart_settings(move || {
+        if let Some(ui) = weak.upgrade() {
+            ui.invoke_open_autostart_settings();
+            present(&ui, false, &startup_focus);
         }
     });
     let weak = ui.as_weak();
@@ -683,6 +671,9 @@ fn run_server(options: Options, mut server: server::Server) -> Result<()> {
     ui.set_scanning(false);
     controller.refresh();
     slint::run_event_loop_until_quit()?;
+    if let Some(error) = WINDOW_RENDER_ERROR.with_borrow_mut(Option::take) {
+        return Err(error.into());
+    }
     drop(tray);
     drop(hotkey_manager);
     // Release ownership only after the tray and global shortcut are gone.

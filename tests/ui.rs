@@ -31,6 +31,55 @@ fn click(ui: &LauncherWindow, x: f32, y: f32) {
 }
 
 #[test]
+fn large_lists_only_fetch_visible_rows_and_can_scroll_to_distant_results() {
+    use slint::{Model, ModelTracker};
+    struct LargeModel(Rc<Cell<usize>>);
+    impl Model for LargeModel {
+        type Data = AppRow;
+        fn row_count(&self) -> usize {
+            10_000
+        }
+        fn row_data(&self, row: usize) -> Option<AppRow> {
+            self.0.set(self.0.get() + 1);
+            (row < self.row_count()).then(|| AppRow {
+                name: format!("Application {row}").into(),
+                ..Default::default()
+            })
+        }
+        fn model_tracker(&self) -> &dyn ModelTracker {
+            &()
+        }
+    }
+    slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+        i_slint_backend_testing::TestingBackendOptions {
+            renderer_name: Some("software".into()),
+            ..Default::default()
+        },
+    )))
+    .unwrap();
+    let ui = LauncherWindow::new().unwrap();
+    let fetches = Rc::new(Cell::new(0));
+    ui.set_results(ModelRc::new(LargeModel(fetches.clone())));
+    ui.show().unwrap();
+    ui.invoke_focus_search();
+    ui.window().take_snapshot().unwrap();
+    assert!(
+        fetches.get() < 1000,
+        "list must not instantiate all 10,000 rows: {} fetches",
+        fetches.get()
+    );
+    ui.set_selected_index(9998);
+    key(&ui, Key::DownArrow.into());
+    ui.window().take_snapshot().unwrap();
+    let submitted = Rc::new(Cell::new(-1));
+    let result = submitted.clone();
+    ui.on_launch_selected(move |index, _| result.set(index));
+    key(&ui, Key::Return.into());
+    assert_eq!(submitted.get(), 9999);
+    ui.hide().unwrap();
+}
+
+#[test]
 fn settings_edits_save_without_launching_and_escape_returns_to_search() {
     slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
         i_slint_backend_testing::TestingBackendOptions {
@@ -130,6 +179,66 @@ fn settings_edits_save_without_launching_and_escape_returns_to_search() {
     ui.invoke_open_settings();
     assert_eq!(ui.get_shortcut_draft(), "Alt+Space");
     ui.invoke_reset_search();
+    assert!(!ui.get_settings_open());
+    ui.hide().unwrap();
+}
+
+#[test]
+fn autostart_settings_require_an_explicit_click_and_do_not_record_shortcuts() {
+    slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+        i_slint_backend_testing::TestingBackendOptions {
+            renderer_name: Some("software".into()),
+            ..Default::default()
+        },
+    )))
+    .unwrap();
+    let ui = LauncherWindow::new().unwrap();
+    shortcut_recorder::bind(&ui);
+    let requests = Rc::new(std::cell::RefCell::new(Vec::new()));
+    let calls = requests.clone();
+    ui.on_set_autostart(move |enabled| calls.borrow_mut().push(enabled));
+    let refreshes = Rc::new(Cell::new(0));
+    let calls = refreshes.clone();
+    ui.on_refresh_autostart(move || calls.set(calls.get() + 1));
+    ui.show().unwrap();
+    ui.invoke_open_autostart_settings();
+    assert!(ui.get_settings_open());
+    assert!(!ui.get_shortcut_recording());
+    assert_eq!(refreshes.get(), 1);
+    assert!(
+        requests.borrow().is_empty(),
+        "opening settings must only read state"
+    );
+    ui.window().take_snapshot().unwrap();
+    click(&ui, 300., 214.);
+    assert!(
+        requests.borrow().is_empty(),
+        "unavailable system service must disable requests"
+    );
+    ui.set_autostart_available(true);
+    click(&ui, 300., 214.);
+    assert_eq!(*requests.borrow(), [true]);
+    ui.set_autostart_busy(true);
+    click(&ui, 300., 214.);
+    assert_eq!(
+        *requests.borrow(),
+        [true],
+        "a pending operation must prevent duplicate requests"
+    );
+    ui.set_autostart_busy(false);
+    ui.set_autostart_registered(true);
+    ui.set_autostart_status("已提交：等待在系统设置中批准".into());
+    ui.set_autostart_system_settings(true);
+    click(&ui, 300., 214.);
+    assert_eq!(
+        *requests.borrow(),
+        [true, false],
+        "pending registrations must be cancellable"
+    );
+    let before = ui.get_shortcut_draft();
+    key(&ui, "a".into());
+    assert_eq!(ui.get_shortcut_draft(), before);
+    key(&ui, Key::Escape.into());
     assert!(!ui.get_settings_open());
     ui.hide().unwrap();
 }

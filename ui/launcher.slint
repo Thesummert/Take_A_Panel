@@ -1,4 +1,4 @@
-import { ScrollView, Palette } from "std-widgets.slint";
+import { ListView, Palette } from "std-widgets.slint";
 import { SettingsPanel } from "settings.slint";
 export { LauncherTray } from "tray.slint";
 
@@ -45,11 +45,22 @@ export component LauncherWindow inherits Window {
     init => { Palette.color-scheme = ColorScheme.dark; }
 
     in property <image> background-image;
+    in property <bool> background-busy;
     in-out property <string> background-path;
     in-out property <float> background-opacity: 1;
     in-out property <float> background-blur: 0;
     callback save-appearance(string, float, float);
     callback browse-background();
+    in property <bool> autostart-registered;
+    in property <bool> autostart-available;
+    in property <bool> autostart-busy;
+    in property <bool> autostart-system-settings;
+    in property <bool> autostart-failed;
+    in property <string> autostart-status: "正在读取系统状态…";
+    in property <string> autostart-message;
+    callback set-autostart(bool);
+    callback refresh-autostart();
+    callback open-autostart-system-settings();
     in property <[AppRow]> results;
     in property <int> total-count;
     in property <bool> scanning: true;
@@ -79,7 +90,15 @@ export component LauncherWindow inherits Window {
         root.settings-message = "";
         root.settings-failed = false;
         root.settings-open = true;
+        settings-panel.page = 0;
         settings-panel.focus-editor();
+    }
+
+    public function open-autostart-settings() {
+        root.open-settings();
+        settings-panel.page = 2;
+        settings-panel.focus-editor();
+        root.refresh-autostart();
     }
 
     public function close-settings() {
@@ -121,7 +140,7 @@ export component LauncherWindow inherits Window {
         border-width: 1px;
         clip: true;
 
-        Image { width: parent.width; height: parent.height; source: root.background-image; image-fit: cover; opacity: root.background-opacity; }
+        Image { width: parent.width; height: parent.height; source: root.background-image; image-fit: cover; }
         VerticalLayout {
             spacing: 0px;
             padding: 0px;
@@ -262,15 +281,14 @@ export component LauncherWindow inherits Window {
 
             Rectangle {
                 vertical-stretch: 1;
-                results-view := ScrollView {
+                results-view := ListView {
                     x: 10px; width: parent.width - 20px;
                     height: parent.height;
-                    content-height: root.results.length * 66px;
                     horizontal-scrollbar-policy: always-off;
                     for app[index] in root.results: Rectangle {
-                        x: 0px; y: index * 66px;
+                        x: 0px;
                         width: results-view.visible-width;
-                        height: 64px;
+                        height: 66px;
                         border-radius: 10px;
                         background: root.selected-index == index ? #2d293e : (row-touch.has-hover ? #22242c : transparent);
                         border-width: root.selected-index == index ? 1px : 0px;
@@ -373,11 +391,22 @@ export component LauncherWindow inherits Window {
             x: 1px; y: 45px;
             width: parent.width - 2px; height: parent.height - 46px;
             visible: root.settings-open;
+            background-busy: root.background-busy;
             background-path <=> root.background-path;
             background-opacity <=> root.background-opacity;
             background-blur <=> root.background-blur;
             save-appearance(path, opacity, blur) => { root.save-appearance(path, opacity, blur); }
             browse-background => { root.browse-background(); }
+            autostart-registered: root.autostart-registered;
+            autostart-available: root.autostart-available;
+            autostart-busy: root.autostart-busy;
+            autostart-system-settings: root.autostart-system-settings;
+            autostart-failed: root.autostart-failed;
+            autostart-status: root.autostart-status;
+            autostart-message: root.autostart-message;
+            set-autostart(enabled) => { root.set-autostart(enabled); }
+            refresh-autostart => { root.refresh-autostart(); }
+            open-autostart-system-settings => { root.open-autostart-system-settings(); }
             draft <=> root.shortcut-draft;
             current-hotkey: root.hotkey-label;
             message: root.settings-message;

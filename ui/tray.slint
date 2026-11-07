@@ -4,6 +4,7 @@ export component LauncherTray inherits SystemTrayIcon {
     callback show-panel();
     callback refresh-apps();
     callback shortcut-settings();
+    callback autostart-settings();
     callback quit-server();
     clicked => { root.show-panel(); }
     Menu {
@@ -12,6 +13,7 @@ export component LauncherTray inherits SystemTrayIcon {
         Menu {
             title: "设置";
             MenuItem { title: "快捷键设置"; activated => { root.shortcut-settings(); } }
+            MenuItem { title: "开机自启"; activated => { root.autostart-settings(); } }
         }
         MenuSeparator { }
         MenuItem { title: "退出 Take a Panel"; activated => { root.quit-server(); } }

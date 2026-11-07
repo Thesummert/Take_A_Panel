@@ -12,7 +12,7 @@ anyhow = "1"
 global-hotkey = "0.8"
 getrandom = "0.3"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "ico"] }
-slint = { version = "=1.18.1", default-features = false, features = ["std", "backend-winit", "renderer-software", "compat-1-18", "unstable-winit-030", "system-tray"] }
+slint = { version = "=1.18.1", default-features = false, features = ["std", "backend-winit", "renderer-femtovg", "renderer-software", "compat-1-18", "unstable-winit-030", "system-tray"] }
 walkdir = "2"
 
 [target.'cfg(unix)'.dependencies]
@@ -22,21 +22,25 @@ libc = "0.2"
 plist = "1"
 objc2 = "0.6"
 objc2-app-kit = { version = "0.3", default-features = false, features = ["NSWorkspace", "NSImage", "NSImageRep", "NSBitmapImageRep", "NSGraphicsContext", "objc2-core-graphics"] }
-objc2-foundation = { version = "0.3", default-features = false, features = ["NSAppleEventDescriptor", "NSAppleEventManager", "NSString", "NSData", "NSDictionary", "NSGeometry"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["NSAppleEventDescriptor", "NSAppleEventManager", "NSString", "NSData", "NSDictionary", "NSGeometry", "NSError"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
+zbus = "=5.19.0"
+url = "2.5"
 freedesktop-icons = "0.4"
 resvg = { version = "0.48", default-features = false }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 serde_json = "1"
-windows-sys = { version = "0.61", features = ["Win32_UI_Shell", "Win32_UI_WindowsAndMessaging", "Win32_Foundation", "Win32_System_Com"] }
+windows-sys = { version = "0.61", features = ["Win32_UI_Shell", "Win32_UI_WindowsAndMessaging", "Win32_Foundation", "Win32_System_Com", "Win32_System_Registry"] }
 windows = { version = "0.62", features = ["Win32_UI_Shell", "Win32_System_Com", "Win32_Graphics_Gdi", "Win32_Foundation"] }
 
 [build-dependencies]
 slint-build = "=1.18.1"
 
 [dev-dependencies]
+zbus = "=5.19.0"
+url = "2.5"
 freedesktop-icons = "0.4"
 i-slint-backend-testing = { version = "=1.18.1", features = ["renderer-software"] }
 png = "0.18"
@@ -45,6 +49,16 @@ resvg = { version = "0.48", default-features = false }
 [profile.release]
 lto = "thin"
 strip = true
+
+# Keep decoding and resampling fast when running `cargo run` without --release.
+[profile.dev.package.image]
+opt-level = 3
+
+[profile.dev.package.png]
+opt-level = 3
+
+[profile.dev.package.zune-jpeg]
+opt-level = 3
 
 # Carbon hotkey registration must run on the main thread, outside Rust's
 # default test worker threads.

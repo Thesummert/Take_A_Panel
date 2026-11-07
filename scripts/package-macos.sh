@@ -99,6 +99,9 @@ plutil -replace LSMinimumSystemVersion -string "$MACOSX_DEPLOYMENT_TARGET" "$app
 plutil -lint "$app/Contents/Info.plist"
 cp "$project_dir/packaging/macos/AppIcon.icns" "$app/Contents/Resources/AppIcon.icns"
 cp "$project_dir/LICENSE" "$app/Contents/Resources/LICENSE"
+mkdir -p "$app/Contents/Library/LaunchAgents"
+cp "$project_dir/packaging/macos/com.takeapanel.launcher.autostart.plist" "$app/Contents/Library/LaunchAgents/"
+plutil -lint "$app/Contents/Library/LaunchAgents/com.takeapanel.launcher.autostart.plist"
 
 sign_args=(--force --sign "$signing_identity")
 if [[ "$signing_identity" == - ]]; then

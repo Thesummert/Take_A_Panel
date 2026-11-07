@@ -12,9 +12,23 @@
 cargo run --release
 ```
 
+默认优先使用 FemtoVG / OpenGL 硬件渲染，同时编入软件渲染后端。图形初始化失败时会使用软件渲染重试一次。应用列表按可见区域创建行，大量应用不会一次生成全部界面元素；背景图片在后台按显示尺寸处理并缓存。
+
+背景使用快速高斯近似模糊，调整不透明度会复用已解码和模糊的图片。处理后的背景保存在设置目录的 `background.rgb`，下次启动直接读取；原图、显示尺寸或外观参数变化时自动更新，缓存损坏时自动重新处理。只保留一张背景缓存。
+
+需要强制使用软件渲染时，先退出已有 server，再设置 `SLINT_BACKEND=winit-software` 启动；`SLINT_BACKEND=winit-femtovg` 可指定 OpenGL。可运行 `cargo run --example render_check` 短暂打开测试窗口，检查实际渲染路径和截图是否正常。
+
 默认运行会自动启动后台 server 并显示面板；已有 server 时直接调用它，客户端随即退出。之后使用 **Ctrl + Alt + Space** 显示 / 隐藏。macOS 上 Alt 对应 Option，Ctrl 对应 Control。成功启动应用或点击窗口外会隐藏面板，server 继续运行。
 
 server 在状态栏显示 **P** 图标，菜单提供“显示面板”“刷新应用列表”“设置 → 快捷键设置”“退出 Take a Panel”。面板右上角的齿轮图标也可以打开设置，左侧提供“快捷键设置”一栏。macOS 点击图标展开菜单，Windows / Linux 可点击图标显示面板、右键打开菜单。macOS server 使用 Accessory 模式，不占用 Dock。
+
+在设置左侧或 **P 菜单 → 设置 → 开机自启** 中，点击“请求开机自启”可向系统添加当前用户的登录启动项。启用后，登录系统时只启动后台 server，不弹出面板；点击“关闭开机自启”可以取消。页面从系统读取状态，打开页面或重新获得焦点时刷新，也可以手动刷新；不会在每次运行时自动注册或覆盖系统中的禁用决定。
+
+- **macOS 13+**：使用系统原生 [SMAppService](https://developer.apple.com/documentation/servicemanagement/smappservice) 注册应用包内的 LaunchAgent。需要先通过 `./scripts/package-macos.sh` 打包并从签名的 `.app` 运行（建议放在“应用程序”目录）；`cargo run` / 裸二进制会显示打包提示。系统要求批准或已撤销许可时，页面显示“等待在系统设置中批准”，点击“打开系统启动项设置”后允许 Take a Panel 在后台运行。macOS 11/12 可继续使用应用，内置自启管理需要 macOS 13+。
+- **Windows**：使用当前用户的 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` 启动项，无需管理员权限；如果在系统设置中禁用了该项，需在“启动应用”中重新允许。
+- **Linux**：使用 [XDG Autostart](https://specifications.freedesktop.org/autostart-spec/latest/) 的 `$XDG_CONFIG_HOME/autostart/com.takeapanel.launcher.desktop`（默认 `~/.config/autostart/`），需桌面环境支持该规范。关闭时写入 `Hidden=true`，也可通过桌面的启动应用设置禁用。
+
+Windows / Linux 启动项记录当前可执行文件的路径，移动程序后请重新关闭并启用。自启使用正常的配置目录和已保存的快捷键；本次运行的临时命令行参数、环境变量不会保存到系统启动项。
 
 在快捷键设置中点击录入区域，直接按下实际的组合键，例如按住 Ctrl 和 Alt 后按空格，便会显示 `Ctrl+Alt+Space`，无需输入组合键名称。支持字母、数字、空格、方向键、功能键等，按键按物理位置识别，macOS Option 产生的特殊字符不会影响录入。仅按修饰键不会覆盖组合键；录入当前已启用的快捷键不会隐藏面板。点击“保存快捷键”或按 Enter 即可立即生效，并在下次启动时继续使用。“恢复默认”会填入 `Ctrl+Alt+Space`，点击保存后生效；按 Esc 或“返回面板”放弃未保存的修改。与面板内操作冲突、被其他程序占用或保存失败时显示错误，并保留原快捷键。页面同时列出面板内的固定快捷键供查阅。
 
@@ -77,6 +91,8 @@ cargo run --release -- --no-hotkey
 | Linux Wayland | 与 X11 相同 | `gio launch` | 暂未接入 Wayland GlobalShortcuts portal |
 
 Linux 会处理用户条目优先级、`Hidden`、`NoDisplay`、`OnlyShowIn`、`NotShowIn`、`TryExec` 和本地化名称。启动交给 GLib 解析 `.desktop` 的参数、工作目录、终端及 DBus 激活，不经过 shell 拼接。
+
+Linux 背景图片的“浏览”按钮优先通过 XDG Desktop Portal 使用当前桌面环境的文件选择器。Portal 不可用时，自动尝试已安装的 KDialog、Zenity 或 YAD；KDE 优先使用 KDialog。取消选择会直接返回，不再弹出其他选择器。
 
 Wayland、`--no-hotkey` 或快捷键注册失败时，仍可从 P 菜单或命令行 `--show` 恢复面板。Linux 状态栏需要支持 StatusNotifierItem / AppIndicator 的桌面；GNOME 可能需要相应扩展，未显示图标时仍可使用命令行唤出。
 
@@ -163,6 +179,7 @@ src/client.rs        server 检测、后台启动与命令转发
 src/server.rs        单实例文件锁、本地 IPC 与生命周期
 src/options.rs       server / 客户端命令行选项
 src/settings.rs      快捷键配置读取与保存
+src/autostart/       系统登录自启注册、状态查询与设置页绑定
 src/shortcut_recorder.rs 按键录入与组合键转换
 src/shortcuts.rs     全局快捷键注册与运行时切换
 src/search.rs        搜索与排序
