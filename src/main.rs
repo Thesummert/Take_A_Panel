@@ -560,7 +560,15 @@ fn run_server(options: Options, mut server: server::Server) -> Result<()> {
     let backend = slint::BackendSelector::new()
         .backend_name("winit".into())
         .with_winit_window_attributes_hook(|attributes| {
-            attributes.with_transparent(true).with_resizable(false)
+            let attributes = attributes.with_transparent(true).with_resizable(false);
+            #[cfg(target_os = "linux")]
+            let attributes = {
+                use winit::platform::x11::{WindowAttributesExtX11, WindowType};
+                attributes
+                    .with_name("com.takeapanel.launcher", "take-a-panel")
+                    .with_x11_window_type(vec![WindowType::Dialog])
+            };
+            attributes
         });
     #[cfg(target_os = "macos")]
     let backend = {

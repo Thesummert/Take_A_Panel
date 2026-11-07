@@ -108,6 +108,26 @@ Wayland、`--no-hotkey` 或快捷键注册失败时，仍可从 P 菜单或命�
 
 Wayland 可在桌面的自定义快捷键设置中绑定 `take-a-panel --toggle`，由桌面环境接收快捷键并调用已有 server。
 
+Linux 下窗口的 Wayland `app_id` 和 X11 窗口类均为 `com.takeapanel.launcher`。X11 窗口声明为对话框，支持该提示的平铺式窗口管理器会将其悬浮显示；Wayland 是否悬浮由合成器决定。以 Sway 为例，可在配置文件中添加以下规则后重新加载配置：
+
+```text
+for_window [app_id="^com[.]takeapanel[.]launcher$"] floating enable
+for_window [class="^com[.]takeapanel[.]launcher$"] floating enable
+```
+
+第一条适用于原生 Wayland 窗口，第二条适用于 X11 / XWayland 窗口。其他平铺式窗口管理器可使用相同的 `app_id` 或窗口类设置悬浮规则。
+
+Niri 用户可在配置文件中添加以下规则（配置会自动重新加载）：
+
+```kdl
+window-rule {
+    match app-id="^com[.]takeapanel[.]launcher$"
+    open-floating true
+}
+```
+
+更新程序后需要退出并重新启动后台 server，新的窗口标识才会生效。
+
 server 通过当前用户的文件锁保证单实例，使用带凭据的本机回环连接传递控制命令，空闲时不轮询。异常退出后文件锁会自动释放，下次运行可重新启动。运行文件和后台日志位于 macOS 的 `~/Library/Caches/TakeAPanel/runtime`、Windows 的 `%LOCALAPPDATA%/TakeAPanel/runtime`，Linux 优先使用 `$XDG_RUNTIME_DIR/take-a-panel`，其次使用用户缓存目录。可通过 `TAKE_A_PANEL_RUNTIME_DIR` 指定独立目录；自动启动失败时查看目录下的 `server.log`。
 
 ## macOS `.app` 打包
