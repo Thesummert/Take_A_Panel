@@ -19,7 +19,7 @@ pub fn is_command(query: &str) -> bool {
     query.trim().eq_ignore_ascii_case("ss")
 }
 
-#[derive(Debug)]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 struct Entry {
     path: PathBuf,
     name: String,
@@ -45,7 +45,7 @@ impl Entry {
     }
 }
 
-#[derive(Default, Debug)]
+#[derive(Default, Debug, serde::Serialize, serde::Deserialize)]
 struct Index {
     entries: Vec<Entry>,
     warnings: usize,
@@ -70,6 +70,72 @@ impl Index {
         }
         status
     }
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct DiskIndex {
+    version: u8,
+    roots: Vec<PathBuf>,
+    index: Index,
+}
+
+fn load_cache(path: &Path, roots: &[PathBuf]) -> Option<Index> {
+    let file = std::fs::File::open(path).ok()?;
+    // Limit corrupt or unexpectedly large cache files before parsing.
+    if file.metadata().ok()?.len() > 256 * 1024 * 1024 {
+        return None;
+    }
+    let cache: DiskIndex = serde_json::from_reader(std::io::BufReader::new(file)).ok()?;
+    if cache.version != 1 || cache.roots != roots || cache.index.entries.len() > MAX_ENTRIES {
+        return None;
+    }
+    Some(cache.index)
+}
+
+fn save_cache(
+    path: &Path,
+    roots: &[PathBuf],
+    index: &Index,
+    revision: &AtomicU64,
+    generation: u64,
+    lock: &std::sync::Mutex<()>,
+) -> Result<()> {
+    use std::io::Write;
+    std::fs::create_dir_all(path.parent().context("缓存路径无效")?)?;
+    let mut random = [0; 8];
+    getrandom::fill(&mut random).map_err(|e| anyhow::anyhow!("{e}"))?;
+    let temporary = path.with_extension(format!("{:016x}.tmp", u64::from_ne_bytes(random)));
+    let result = (|| -> Result<()> {
+        let file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary)?;
+        let mut writer = std::io::BufWriter::new(file);
+        serde_json::to_writer(
+            &mut writer,
+            &DiskIndexRef {
+                version: 1,
+                roots,
+                index,
+            },
+        )?;
+        writer.flush()?;
+        drop(writer);
+        let _guard = lock.lock().map_err(|_| anyhow::anyhow!("缓存锁不可用"))?;
+        if revision.load(Ordering::Relaxed) == generation {
+            std::fs::rename(&temporary, path)?;
+        }
+        Ok(())
+    })();
+    let _ = std::fs::remove_file(temporary);
+    result
+}
+
+#[derive(serde::Serialize)]
+struct DiskIndexRef<'a> {
+    version: u8,
+    roots: &'a [PathBuf],
+    index: &'a Index,
 }
 
 /// Resolve and validate the complete draft before replacing saved settings.
@@ -322,6 +388,31 @@ pub(crate) mod test_support {
 mod tests {
     use super::*;
     use test_support::TempDir;
+
+    #[test]
+    fn disk_cache_round_trip_rejects_wrong_scope_corruption_and_cancelled_writes() {
+        let dir = TempDir::new();
+        let path = dir.0.join("cache/index.json");
+        let roots = vec![dir.0.clone()];
+        let index = Index {
+            entries: vec![Entry::new(dir.0.join("文件.txt"), false)],
+            ..Default::default()
+        };
+        let revision = AtomicU64::new(1);
+        let lock = std::sync::Mutex::new(());
+        save_cache(&path, &roots, &index, &revision, 1, &lock).unwrap();
+        assert_eq!(
+            load_cache(&path, &roots).unwrap().entries[0].name,
+            "文件.txt"
+        );
+        assert!(load_cache(&path, &[dir.0.join("other")]).is_none());
+        revision.store(2, Ordering::Relaxed);
+        let empty = Index::default();
+        save_cache(&path, &roots, &empty, &revision, 1, &lock).unwrap();
+        assert_eq!(load_cache(&path, &roots).unwrap().entries.len(), 1);
+        std::fs::write(&path, "broken").unwrap();
+        assert!(load_cache(&path, &roots).is_none());
+    }
 
     #[test]
     fn ignore_rules_hidden_items_overlapping_roots_and_symlinks_are_respected() {

@@ -39,6 +39,7 @@ export component SettingsPanel inherits Rectangle {
     callback save-file-roots(string);
     callback browse-file-folder();
     callback rebuild-file-index();
+    callback clear-file-index();
     callback save(string);
     callback restore-default();
     callback close();
@@ -205,7 +206,7 @@ export component SettingsPanel inherits Rectangle {
                 padding: 24px;
                 spacing: 12px;
                 Text { text: "文件搜索"; color: #f0eef8; font-size: 21px; font-weight: 600; }
-                Text { text: "索引范围：每行一个目录，支持 ~/，无需引号。\n保存后递归索引文件和文件夹；留空可停用索引。"; color: #a2a5b3; font-size: 12px; wrap: word-wrap; }
+                Text { text: "索引范围：每行一个目录，支持 ~/，无需引号。\n保存后递归索引文件和文件夹；留空可停用索引。\n运行期间每 30 分钟后台刷新，进入文件搜索时也会刷新。"; color: #a2a5b3; font-size: 12px; wrap: word-wrap; }
                 Button {
                     text: root.file-folder-dialog-open ? "正在选择文件夹…" : "添加文件夹…";
                     enabled: !root.file-settings-busy && !root.file-folder-dialog-open;
@@ -220,6 +221,7 @@ export component SettingsPanel inherits Rectangle {
                 Text { text: "跳过隐藏项，遵循 .gitignore / .ignore；不跟随目录内的符号链接。"; color: #858896; font-size: 11px; wrap: word-wrap; }
                 HorizontalLayout {
                     spacing: 10px;
+                    Button { text: "清空索引缓存"; enabled: !root.file-settings-busy && !root.file-folder-dialog-open; clicked => { root.clear-file-index(); } }
                     Button { text: "重建索引"; enabled: !root.file-settings-busy && !root.file-folder-dialog-open; clicked => { root.rebuild-file-index(); } }
                     Button { text: root.file-settings-busy ? "正在保存…" : "保存并重建索引"; primary: true; enabled: !root.file-settings-busy && !root.file-folder-dialog-open; clicked => { root.save-file-roots(root.file-roots-draft); } }
                 }

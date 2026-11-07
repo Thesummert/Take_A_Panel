@@ -4,13 +4,14 @@ use slint::{ComponentHandle, ModelRc, VecModel};
 use std::{
     cell::{Cell, RefCell},
     rc::Rc,
-    sync::{Arc, mpsc},
+    sync::{Arc, Mutex, mpsc},
 };
 
 enum Event {
     Saved(Result<Vec<PathBuf>>),
     Progress(u64, usize),
-    Indexed(u64, Arc<Index>),
+    Cached(u64, Arc<Index>),
+    Indexed(u64, Arc<Index>, Option<String>),
     Searched(u64, Matches),
     Opened(Result<()>),
 }
@@ -34,10 +35,13 @@ pub struct Controller {
     receiver: mpsc::Receiver<Event>,
     timer: slint::Timer,
     debounce: slint::Timer,
+    refresh_timer: slint::Timer,
     querying: Cell<bool>,
     opening: Cell<bool>,
     focus: Arc<WindowFocus>,
     settings_directory: Option<PathBuf>,
+    cache_path: Option<PathBuf>,
+    cache_lock: Arc<Mutex<()>>,
 }
 
 impl Drop for Controller {
@@ -49,13 +53,29 @@ impl Drop for Controller {
 
 impl Controller {
     pub fn new(ui: &LauncherWindow, focus: Arc<WindowFocus>) -> Rc<Self> {
-        Self::with_settings(ui, focus, settings::directory())
+        Self::with_paths(
+            ui,
+            focus,
+            settings::directory(),
+            settings::cache_directory().ok(),
+        )
     }
 
+    #[cfg(test)]
     pub(crate) fn with_settings(
         ui: &LauncherWindow,
         focus: Arc<WindowFocus>,
         directory: Result<PathBuf>,
+    ) -> Rc<Self> {
+        let cache_directory = directory.as_ref().ok().map(|path| path.join("cache"));
+        Self::with_paths(ui, focus, directory, cache_directory)
+    }
+
+    fn with_paths(
+        ui: &LauncherWindow,
+        focus: Arc<WindowFocus>,
+        directory: Result<PathBuf>,
+        cache_directory: Option<PathBuf>,
     ) -> Rc<Self> {
         let (sender, receiver) = mpsc::channel();
         let (query_sender, queries) = mpsc::channel::<Query>();
@@ -119,10 +139,13 @@ impl Controller {
             receiver,
             timer: slint::Timer::default(),
             debounce: slint::Timer::default(),
+            refresh_timer: slint::Timer::default(),
             querying: Cell::new(false),
             opening: Cell::new(false),
             focus,
             settings_directory,
+            cache_path: cache_directory.map(|path| path.join("file-index.json")),
+            cache_lock: Arc::new(Mutex::new(())),
         });
         let weak = Rc::downgrade(&controller);
         ui.on_save_file_roots(move |draft| {
@@ -136,7 +159,23 @@ impl Controller {
                 controller.rebuild();
             }
         });
-        controller.rebuild();
+        let weak = Rc::downgrade(&controller);
+        ui.on_clear_file_index(move || {
+            if let Some(controller) = weak.upgrade() {
+                controller.clear_index();
+            }
+        });
+        let weak = Rc::downgrade(&controller);
+        controller.refresh_timer.start(
+            slint::TimerMode::Repeated,
+            Duration::from_secs(30 * 60),
+            move || {
+                if let Some(controller) = weak.upgrade() {
+                    controller.refresh();
+                }
+            },
+        );
+        controller.start_index(true, true);
         controller
     }
 
@@ -144,6 +183,7 @@ impl Controller {
         let Some(ui) = self.ui.upgrade() else {
             return;
         };
+        self.refresh();
         ui.set_file_search_mode(true);
         ui.set_query("".into());
         ui.set_error_message("".into());
@@ -217,31 +257,95 @@ impl Controller {
     }
 
     pub fn rebuild(self: &Rc<Self>) {
+        self.start_index(true, false);
+    }
+
+    fn refresh(self: &Rc<Self>) {
+        if self.ui.upgrade().is_some_and(|ui| !ui.get_file_indexing()) {
+            self.start_index(false, false);
+        }
+    }
+
+    fn clear_index(self: &Rc<Self>) {
         let Some(ui) = self.ui.upgrade() else {
             return;
         };
-        let generation = self.index_revision.fetch_add(1, Ordering::Relaxed) + 1;
+        self.index_revision.fetch_add(1, Ordering::Relaxed);
+        let removal_error = self.cache_lock.lock().ok().and_then(|_guard| {
+            self.cache_path
+                .as_ref()
+                .and_then(|path| match std::fs::remove_file(path) {
+                    Ok(()) => None,
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+                    Err(error) => Some(error.to_string()),
+                })
+        });
         self.suspend();
         *self.index.borrow_mut() = Arc::default();
         self.matches.borrow_mut().clear();
         self.rows.set_vec(Vec::new());
+        ui.set_file_indexing(false);
         ui.set_file_count(0);
         ui.set_file_match_count(0);
+        ui.set_file_settings_failed(removal_error.is_some());
+        ui.set_file_settings_message(
+            removal_error
+                .map(|error| format!("无法删除磁盘索引缓存：{error}"))
+                .unwrap_or_default()
+                .into(),
+        );
+        ui.set_file_index_status(
+            if self.roots.borrow().is_empty() {
+                Index::default().status(false)
+            } else {
+                "索引缓存已清空；进入文件搜索或等待定时刷新可重新建立。".into()
+            }
+            .into(),
+        );
+    }
+
+    fn start_index(self: &Rc<Self>, clear: bool, load: bool) {
+        let Some(ui) = self.ui.upgrade() else {
+            return;
+        };
+        let generation = self.index_revision.fetch_add(1, Ordering::Relaxed) + 1;
+        if clear {
+            self.suspend();
+            *self.index.borrow_mut() = Arc::default();
+            self.matches.borrow_mut().clear();
+            self.rows.set_vec(Vec::new());
+            ui.set_file_count(0);
+            ui.set_file_match_count(0);
+        }
         let roots = self.roots.borrow().clone();
         ui.set_file_indexing(!roots.is_empty());
         if roots.is_empty() {
             ui.set_file_index_status(Index::default().status(false).into());
             return;
         }
-        ui.set_file_index_status("正在建立索引，已发现 0 项…".into());
+        ui.set_file_index_status("正在后台建立索引，已发现 0 项…".into());
         let revision = self.index_revision.clone();
         let sender = self.sender.clone();
+        let cache_path = self.cache_path.clone();
+        let cache_lock = self.cache_lock.clone();
         std::thread::spawn(move || {
+            if load
+                && let Some(index) = cache_path
+                    .as_deref()
+                    .and_then(|path| load_cache(path, &roots))
+            {
+                let _ = sender.send(Event::Cached(generation, Arc::new(index)));
+            }
             let index = build_index(&roots, &revision, generation, |count| {
                 let _ = sender.send(Event::Progress(generation, count));
             });
             if let Some(index) = index {
-                let _ = sender.send(Event::Indexed(generation, Arc::new(index)));
+                let error = cache_path.as_deref().and_then(|path| {
+                    save_cache(path, &roots, &index, &revision, generation, &cache_lock)
+                        .err()
+                        .map(|error| format!("{error:#}"))
+                });
+                let _ = sender.send(Event::Indexed(generation, Arc::new(index), error));
             }
         });
         self.start_pump();
@@ -304,9 +408,12 @@ impl Controller {
                     match result {
                         Ok(roots) => {
                             ui.set_file_roots_draft(roots_text(&roots).into());
-                            ui.set_file_settings_message(
-                                "索引范围已保存，下次启动继续使用。".into(),
-                            );
+                            self.clear_index();
+                            if !ui.get_file_settings_failed() {
+                                ui.set_file_settings_message(
+                                    "索引范围已保存，下次启动继续使用。".into(),
+                                );
+                            }
                             *self.roots.borrow_mut() = roots;
                             self.rebuild();
                         }
@@ -320,12 +427,34 @@ impl Controller {
                 {
                     ui.set_file_index_status(format!("正在建立索引，已发现 {count} 项…").into());
                 }
-                Event::Indexed(generation, index)
+                Event::Cached(generation, index)
+                    if generation == self.index_revision.load(Ordering::Relaxed) =>
+                {
+                    self.suspend();
+                    ui.set_file_count(index.entries.len() as i32);
+                    ui.set_file_index_status(
+                        format!("{}；正在后台刷新", index.status(true)).into(),
+                    );
+                    *self.index.borrow_mut() = index;
+                    if ui.get_file_search_mode() {
+                        self.query(ui.get_query().as_str());
+                    }
+                }
+                Event::Indexed(generation, index, error)
                     if generation == self.index_revision.load(Ordering::Relaxed) =>
                 {
                     ui.set_file_indexing(false);
                     ui.set_file_count(index.entries.len() as i32);
-                    ui.set_file_index_status(index.status(true).into());
+                    ui.set_file_index_status(
+                        match error {
+                            Some(error) => {
+                                format!("{}；无法保存索引缓存：{error}", index.status(true))
+                            }
+                            None => index.status(true),
+                        }
+                        .into(),
+                    );
+                    self.suspend();
                     *self.index.borrow_mut() = index;
                     if ui.get_file_search_mode() {
                         self.query(ui.get_query().as_str());
@@ -455,6 +584,60 @@ mod tests {
     }
 
     #[test]
+    fn refresh_and_clear_cache_cancel_old_results_and_preserve_roots() {
+        i_slint_backend_testing::init_no_event_loop();
+        let dir = TempDir::new();
+        let root = dir.0.join("files");
+        std::fs::create_dir(&root).unwrap();
+        let config = dir.0.join("config");
+        let ui = LauncherWindow::new().unwrap();
+        let controller = Controller::with_settings(&ui, Arc::default(), Ok(config.clone()));
+        ui.invoke_save_file_roots(root.to_str().unwrap().into());
+        wait(&controller, || {
+            !ui.get_file_settings_busy() && !ui.get_file_indexing()
+        });
+        let path = config.join("cache/file-index.json");
+        assert!(load_cache(&path, &controller.roots.borrow()).is_some());
+        std::fs::write(root.join("new.txt"), "new").unwrap();
+        controller.enter();
+        assert_eq!(ui.get_file_count(), 1);
+        wait(&controller, || {
+            !ui.get_file_indexing() && !ui.get_file_querying()
+        });
+        assert_eq!(ui.get_file_count(), 2);
+        let generation = controller.index_revision.load(Ordering::Relaxed);
+        let old = controller.index.borrow().clone();
+        ui.invoke_clear_file_index();
+        assert!(!path.exists());
+        assert_eq!(ui.get_file_count(), 0);
+        assert!(!controller.roots.borrow().is_empty());
+        controller
+            .sender
+            .send(Event::Indexed(generation, old, None))
+            .unwrap();
+        controller.pump();
+        assert_eq!(ui.get_file_count(), 0);
+        controller.refresh();
+        wait(&controller, || {
+            !ui.get_file_indexing() && !ui.get_file_querying()
+        });
+        assert_eq!(ui.get_file_count(), 2);
+        assert!(path.exists());
+        std::fs::write(root.join("timer.txt"), "new").unwrap();
+        let before = controller.index_revision.load(Ordering::Relaxed);
+        i_slint_backend_testing::mock_elapsed_time(Duration::from_secs(30 * 60));
+        slint::platform::update_timers_and_animations();
+        assert!(controller.index_revision.load(Ordering::Relaxed) > before);
+        wait(&controller, || {
+            !ui.get_file_indexing() && !ui.get_file_querying()
+        });
+        assert_eq!(ui.get_file_count(), 3);
+        ui.invoke_save_file_roots("".into());
+        wait(&controller, || !ui.get_file_settings_busy());
+        assert!(!path.exists());
+    }
+
+    #[test]
     fn switching_queries_and_scopes_rejects_queued_stale_results() {
         i_slint_backend_testing::init_no_event_loop();
         let dir = TempDir::new();
@@ -473,6 +656,7 @@ mod tests {
         controller.enter();
         controller.query("first");
         let old_query = controller.query_revision.load(Ordering::Relaxed);
+        ui.set_query("no match".into());
         controller.query("no match");
         controller
             .sender
@@ -495,7 +679,7 @@ mod tests {
         });
         controller
             .sender
-            .send(Event::Indexed(old_generation, old_index))
+            .send(Event::Indexed(old_generation, old_index, None))
             .unwrap();
         controller.pump();
         assert_eq!(ui.get_results().row_count(), 2);

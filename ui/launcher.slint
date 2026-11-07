@@ -75,6 +75,7 @@ export component LauncherWindow inherits Window {
     callback save-file-roots(string);
     callback browse-file-folder();
     callback rebuild-file-index();
+    callback clear-file-index();
     in property <[AppRow]> results;
     in property <int> total-count;
     in property <bool> scanning: true;
@@ -464,6 +465,7 @@ export component LauncherWindow inherits Window {
             save-file-roots(value) => { root.save-file-roots(value); }
             browse-file-folder => { root.browse-file-folder(); }
             rebuild-file-index => { root.rebuild-file-index(); }
+            clear-file-index => { root.clear-file-index(); }
             draft <=> root.shortcut-draft;
             current-hotkey: root.hotkey-label;
             message: root.settings-message;

@@ -26,6 +26,30 @@ pub fn directory() -> Result<PathBuf> {
     bail!("无法确定设置目录，请设置 TAKE_A_PANEL_CONFIG_DIR")
 }
 
+pub fn cache_directory() -> Result<PathBuf> {
+    if let Some(path) = std::env::var_os("TAKE_A_PANEL_CONFIG_DIR").filter(|s| !s.is_empty()) {
+        return Ok(PathBuf::from(path).join("cache"));
+    }
+    #[cfg(target_os = "macos")]
+    if let Some(home) = std::env::var_os("HOME") {
+        return Ok(PathBuf::from(home).join("Library/Caches/TakeAPanel"));
+    }
+    #[cfg(target_os = "windows")]
+    if let Some(base) = std::env::var_os("LOCALAPPDATA") {
+        return Ok(PathBuf::from(base).join("TakeAPanel/cache"));
+    }
+    #[cfg(target_os = "linux")]
+    {
+        if let Some(base) = std::env::var_os("XDG_CACHE_HOME").filter(|s| !s.is_empty()) {
+            return Ok(PathBuf::from(base).join("take-a-panel"));
+        }
+        if let Some(home) = std::env::var_os("HOME") {
+            return Ok(PathBuf::from(home).join(".cache/take-a-panel"));
+        }
+    }
+    bail!("无法确定索引缓存目录")
+}
+
 pub struct Settings {
     directory: PathBuf,
 }
