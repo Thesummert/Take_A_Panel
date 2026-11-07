@@ -41,6 +41,7 @@ windows-sys = { version = "0.61", features = ["Win32_UI_Shell", "Win32_UI_Window
 windows = { version = "0.62", features = ["Win32_UI_Shell", "Win32_System_Com", "Win32_Graphics_Gdi", "Win32_Foundation"] }
 
 [build-dependencies]
+cc = "1"
 slint-build = "=1.18.1"
 
 [dev-dependencies]

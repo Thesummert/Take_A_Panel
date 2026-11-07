@@ -4214,6 +4214,7 @@ dependencies = [
  "anyhow",
  "arboard",
  "base64 0.22.1",
+ "cc",
  "freedesktop-icons",
  "getrandom 0.3.4",
  "global-hotkey",
