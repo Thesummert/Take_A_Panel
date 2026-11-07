@@ -62,6 +62,7 @@ export component LauncherWindow inherits Window {
     callback refresh-autostart();
     callback open-autostart-system-settings();
     in-out property <bool> file-search-mode;
+    in-out property <bool> clipboard-mode;
     in property <bool> file-indexing;
     in property <bool> file-querying;
     in property <bool> file-settings-busy;
@@ -130,6 +131,7 @@ export component LauncherWindow inherits Window {
 
     public function leave-file-search() {
         root.file-search-mode = false;
+        root.clipboard-mode = false;
         root.query = "";
         root.selected-index = 0;
         results-view.content-y = 0px;
@@ -145,6 +147,7 @@ export component LauncherWindow inherits Window {
     public function reset-search() {
         root.settings-open = false;
         root.file-search-mode = false;
+        root.clipboard-mode = false;
         root.query = "";
         root.selected-index = 0;
         results-view.content-y = 0px;
@@ -245,7 +248,7 @@ export component LauncherWindow inherits Window {
                         horizontal-stretch: 1;
                         capture-key-pressed(event) => {
                             if (event.text == Key.Escape) {
-                                if (root.file-search-mode) { root.leave-file-search(); }
+                                if (root.file-search-mode || root.clipboard-mode) { root.leave-file-search(); }
                                 else { root.dismiss(); }
                                 return accept;
                             }
@@ -273,7 +276,7 @@ export component LauncherWindow inherits Window {
                         }
                         if (root.query == ""): Text {
                             x: 0px; y: 0px; width: parent.width; height: parent.height;
-                            text: root.file-search-mode ? "搜索文件、文件夹或路径" : "搜索应用，输入 ss 搜索文件";
+                            text: root.clipboard-mode ? "搜索剪贴板记录" : (root.file-search-mode ? "搜索文件、文件夹或路径" : "搜索应用，输入 clp 查看剪贴板");
                             color: #717482;
                             font-size: 23px;
                             vertical-alignment: center;
@@ -306,7 +309,7 @@ export component LauncherWindow inherits Window {
                 HorizontalLayout {
                     padding-left: 22px; padding-right: 22px;
                     Text {
-                        text: root.file-search-mode
+                        text: root.clipboard-mode ? "剪贴板记录" : root.file-search-mode
                             ? (root.file-indexing ? "正在建立文件索引…" : (root.file-querying ? "正在搜索文件…" : "文件搜索"))
                             : (root.scanning ? "正在发现应用…" : (root.query == "" ? "全部应用" : "搜索结果"));
                         color: #858896; font-size: 11px;
@@ -364,7 +367,7 @@ export component LauncherWindow inherits Window {
                                 Text { text: app.detail; color: #818391; font-size: 11px; overflow: elide; }
                             }
                             if (root.selected-index == index): Text {
-                                text: root.launching ? "…" : (app.monogram == "SS" ? "进入" : "打开");
+                                text: root.launching ? "…" : (app.monogram == "SS" || app.monogram == "CLP" ? "进入" : (root.clipboard-mode ? "复制" : "打开"));
                                 color: #b2a2e8; font-size: 11px; width: 30px;
                                 vertical-alignment: center;
                             }
@@ -377,13 +380,13 @@ export component LauncherWindow inherits Window {
                 if (root.results.length == 0): VerticalLayout {
                     alignment: center; spacing: 12px;
                     Text {
-                        text: root.file-search-mode
+                        text: root.clipboard-mode ? "没有剪贴板记录" : root.file-search-mode
                             ? (root.file-indexing ? "正在建立文件索引" : (root.file-querying ? "正在搜索" : "没有找到匹配的文件或文件夹"))
                             : (root.scanning ? "正在整理你的应用" : "没有找到匹配的应用");
                         color: #c3bed6; font-size: 17px; horizontal-alignment: center;
                     }
                     Text {
-                        text: root.file-search-mode
+                        text: root.clipboard-mode ? "复制文本或图片后会自动记录" : root.file-search-mode
                             ? (root.file-indexing ? "索引在后台建立，完成后自动显示结果" : (root.file-count == 0 ? "请先在设置中添加文件索引范围" : "试试文件、文件夹名称或路径，Ctrl + R 重建索引"))
                             : (root.scanning ? "稍等片刻，即可开始" : "试试其他名称，或按 Ctrl + R 重新扫描");
                         color: #747785; font-size: 12px; horizontal-alignment: center;
@@ -411,13 +414,13 @@ export component LauncherWindow inherits Window {
                     Text { text: "选择"; font-size: 11px; color: #7d8090; vertical-alignment: center; }
                     Rectangle { width: 6px; }
                     KeyCap { label: "Enter"; }
-                    Text { text: root.file-search-mode ? "打开" : "打开应用"; font-size: 11px; color: #7d8090; vertical-alignment: center; }
+                    Text { text: root.clipboard-mode ? "复制" : (root.file-search-mode ? "打开" : "打开应用"); font-size: 11px; color: #7d8090; vertical-alignment: center; }
                     Rectangle { width: 6px; }
-                    if !root.file-search-mode: KeyCap { label: "Shift + Enter"; }
-                    if !root.file-search-mode: Text { text: "新开"; font-size: 11px; color: #7d8090; vertical-alignment: center; }
+                    if !root.file-search-mode && !root.clipboard-mode: KeyCap { label: "Shift + Enter"; }
+                    if !root.file-search-mode && !root.clipboard-mode: Text { text: "新开"; font-size: 11px; color: #7d8090; vertical-alignment: center; }
                     Rectangle { horizontal-stretch: 1; }
                     Text {
-                        text: root.file-search-mode ? root.file-count + " 项已索引" : (root.scanning ? "扫描中" : root.total-count + " 个应用已就绪");
+                        text: root.clipboard-mode ? "最多保存 100 条记录" : root.file-search-mode ? root.file-count + " 项已索引" : (root.scanning ? "扫描中" : root.total-count + " 个应用已就绪");
                         font-size: 11px; color: #747785;
                         vertical-alignment: center;
                     }

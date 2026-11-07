@@ -4,6 +4,7 @@ mod appearance;
 mod apps;
 mod autostart;
 mod client;
+mod clipboard;
 mod file_search;
 mod icons;
 #[cfg(any(target_os = "linux", test))]
@@ -49,10 +50,19 @@ enum WorkerEvent {
     Launched(Result<(), String>),
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ResultTarget {
+    App(usize),
+    Files,
+    Clipboard,
+}
+
 struct Controller {
     ui: slint::Weak<LauncherWindow>,
     apps: RefCell<Vec<apps::Application>>,
-    matches: RefCell<Vec<Option<usize>>>,
+    matches: RefCell<Vec<ResultTarget>>,
+    clipboard: RefCell<clipboard::History>,
+    clipboard_matches: RefCell<Vec<clipboard::Entry>>,
     icons: RefCell<Vec<slint::Image>>,
     rows: Rc<VecModel<AppRow>>,
     sender: mpsc::Sender<WorkerEvent>,
@@ -67,7 +77,11 @@ struct Controller {
 impl Controller {
     fn new(ui: &LauncherWindow, hotkey_notice: String, focus: Arc<WindowFocus>) -> Rc<Self> {
         let files = file_search::Controller::new(ui, focus.clone());
-        Self::with_files(ui, hotkey_notice, focus, files)
+        {
+            let controller = Self::with_files(ui, hotkey_notice, focus, files);
+            *controller.clipboard.borrow_mut() = clipboard::History::start();
+            controller
+        }
     }
 
     fn with_files(
@@ -81,6 +95,8 @@ impl Controller {
             ui: ui.as_weak(),
             apps: RefCell::new(Vec::new()),
             matches: RefCell::new(Vec::new()),
+            clipboard: RefCell::new(clipboard::History::default()),
+            clipboard_matches: RefCell::new(Vec::new()),
             icons: RefCell::new(Vec::new()),
             rows: Rc::new(VecModel::default()),
             sender,
@@ -117,7 +133,7 @@ impl Controller {
             *cached = icon.into_image();
             if let Some(row) = matches
                 .iter()
-                .position(|&app_index| app_index == Some(index))
+                .position(|&app_index| app_index == ResultTarget::App(index))
                 && let Some(mut data) = self.rows.row_data(row)
             {
                 data.icon = cached.clone();
@@ -131,30 +147,45 @@ impl Controller {
         let Some(ui) = self.ui.upgrade() else {
             return;
         };
-        if ui.get_file_search_mode() {
+        if ui.get_file_search_mode() || ui.get_clipboard_mode() {
             return;
         }
         ui.set_results(ModelRc::from(self.rows.clone()));
         let apps = self.apps.borrow();
         let mut matches = search::search(&apps, query)
             .into_iter()
-            .map(Some)
+            .map(ResultTarget::App)
             .collect::<Vec<_>>();
         if file_search::is_command(query) {
-            matches.insert(0, None);
+            matches.insert(0, ResultTarget::Files);
+        }
+        if query.trim().eq_ignore_ascii_case("clp") {
+            matches.insert(0, ResultTarget::Clipboard);
         }
         let colors = [0xb7a4f4, 0x84c7b5, 0xe4b77b, 0x88b7e4, 0xdc9fb8];
         let rows = matches
             .iter()
             .map(|&index| {
-                let Some(index) = index else {
-                    return AppRow {
-                        name: "文件搜索".into(),
-                        detail: "按 Enter 进入，搜索索引范围中的文件和文件夹".into(),
-                        monogram: "SS".into(),
-                        tint: slint::Color::from_rgb_u8(132, 199, 181),
-                        ..Default::default()
-                    };
+                let index = match index {
+                    ResultTarget::Clipboard => {
+                        return AppRow {
+                            name: "剪贴板记录".into(),
+                            detail: "按 Enter 查看并重新复制历史文本和图片".into(),
+                            monogram: "CLP".into(),
+                            tint: slint::Color::from_rgb_u8(183, 164, 244),
+                            ..Default::default()
+                        };
+                    }
+                    ResultTarget::Files => {
+                        return AppRow {
+                            name: "文件搜索".into(),
+                            detail: "按 Enter 进入，搜索索引范围中的文件和文件夹".into(),
+                            monogram: "SS".into(),
+                            tint: slint::Color::from_rgb_u8(132, 199, 181),
+                            ..Default::default()
+                        };
+                    }
+                    ResultTarget::App(index) => index,
                 };
                 let app = &apps[index];
                 let icon = self.icons.borrow().get(index).cloned().unwrap_or_default();
@@ -182,6 +213,48 @@ impl Controller {
             .collect::<Vec<_>>();
         *self.matches.borrow_mut() = matches;
         self.rows.set_vec(rows);
+        ui.set_selected_index(0);
+    }
+
+    fn update_clipboard_results(&self, query: &str) {
+        let Some(ui) = self.ui.upgrade() else {
+            return;
+        };
+        let entries = self.clipboard.borrow().search(query);
+        let rows: Vec<_> = entries
+            .iter()
+            .map(|entry| match entry {
+                clipboard::Entry::Text(text) => AppRow {
+                    name: text.lines().next().unwrap_or("").into(),
+                    detail: "按 Enter 重新复制文本".into(),
+                    monogram: "C".into(),
+                    tint: slint::Color::from_rgb_u8(183, 164, 244),
+                    ..Default::default()
+                },
+                clipboard::Entry::Image { width, height, .. } => {
+                    let icon = entry.image().map(|image| {
+                        let thumbnail = image::imageops::thumbnail(&image, 64, 64);
+                        let (width, height) = thumbnail.dimensions();
+                        slint::Image::from_rgba8(slint::SharedPixelBuffer::clone_from_slice(
+                            thumbnail.as_raw(),
+                            width,
+                            height,
+                        ))
+                    });
+                    AppRow {
+                        name: format!("图片  {width} × {height}").into(),
+                        detail: "按 Enter 重新复制图片".into(),
+                        monogram: "图".into(),
+                        tint: slint::Color::from_rgb_u8(183, 164, 244),
+                        has_icon: icon.is_some(),
+                        icon: icon.unwrap_or_default(),
+                    }
+                }
+            })
+            .collect();
+        *self.clipboard_matches.borrow_mut() = entries;
+        self.rows.set_vec(rows);
+        ui.set_results(ModelRc::from(self.rows.clone()));
         ui.set_selected_index(0);
     }
 
@@ -233,15 +306,40 @@ impl Controller {
             self.files.open(row);
             return;
         }
+        if ui.get_clipboard_mode() {
+            if let Some(text) = usize::try_from(row)
+                .ok()
+                .and_then(|i| self.clipboard_matches.borrow().get(i).cloned())
+            {
+                match self.clipboard.borrow().copy(text) {
+                    Ok(()) => {
+                        let _ = ui.hide();
+                    }
+                    Err(error) => ui.set_error_message(error.into()),
+                }
+            }
+            return;
+        }
         let selected = usize::try_from(row)
             .ok()
             .and_then(|row| self.matches.borrow().get(row).copied());
         let Some(selected) = selected else {
             return;
         };
-        let Some(index) = selected else {
-            self.files.enter();
-            return;
+        let index = match selected {
+            ResultTarget::Files => {
+                self.files.enter();
+                return;
+            }
+            ResultTarget::Clipboard => {
+                ui.set_clipboard_mode(true);
+                ui.set_query("".into());
+                ui.set_error_message("".into());
+                self.update_clipboard_results("");
+                ui.invoke_focus_search();
+                return;
+            }
+            ResultTarget::App(index) => index,
         };
         let app = self.apps.borrow().get(index).cloned();
         let Some(app) = app else {
@@ -581,6 +679,8 @@ fn run_server(options: Options, mut server: server::Server) -> Result<()> {
         if let Some(c) = weak.upgrade() {
             if c.ui.upgrade().is_some_and(|ui| ui.get_file_search_mode()) {
                 c.files.query(query.as_str());
+            } else if c.ui.upgrade().is_some_and(|ui| ui.get_clipboard_mode()) {
+                c.update_clipboard_results(query.as_str());
             } else {
                 c.files.suspend();
                 c.update_results(query.as_str());
@@ -791,6 +891,29 @@ mod tests {
         controller.files.suspend();
         controller.update_results("");
         assert_eq!(ui.get_results().row_data(0).unwrap().name, "ss");
+    }
+
+    #[test]
+    fn clp_command_has_priority_and_opens_clipboard_mode() {
+        i_slint_backend_testing::init_no_event_loop();
+        let dir = file_search::test_support::TempDir::new();
+        let ui = LauncherWindow::new().unwrap();
+        let controller = controller(&ui, &dir.0);
+        *controller.apps.borrow_mut() = vec![apps::Application {
+            name: "clp".into(),
+            detail: String::new(),
+            keywords: String::new(),
+            icon_name: None,
+            target: apps::LaunchTarget::File("/unused".into()),
+        }];
+        controller.update_results(" CLP ");
+        assert_eq!(controller.rows.row_data(0).unwrap().name, "剪贴板记录");
+        assert_eq!(controller.rows.row_data(1).unwrap().name, "clp");
+        controller.launch(0, false);
+        assert!(ui.get_clipboard_mode());
+        assert_eq!(ui.get_query(), "");
+        controller.update_results("clp");
+        assert_eq!(ui.get_results().row_count(), 0);
     }
 
     #[test]
