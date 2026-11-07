@@ -1,0 +1,121 @@
+import { Button } from "std-widgets.slint";
+
+component ShortcutRow inherits HorizontalLayout {
+    in property <string> action;
+    in property <string> shortcut;
+    Text { text: root.action; color: #a2a5b3; font-size: 12px; vertical-alignment: center; }
+    Text { text: root.shortcut; color: #c3bed6; font-size: 12px; horizontal-alignment: right; vertical-alignment: center; }
+}
+
+export component SettingsPanel inherits Rectangle {
+    in-out property <string> draft;
+    in property <string> current-hotkey;
+    in property <string> message;
+    in property <bool> failed;
+    callback save(string);
+    callback restore-default();
+    callback close();
+    callback capture-key(string, bool, bool, bool, bool);
+    out property <bool> recording: hotkey-recorder.has-focus && root.visible;
+    public function focus-editor() { hotkey-recorder.focus(); }
+
+    background: #191a20;
+    border-bottom-left-radius: 17px;
+    border-bottom-right-radius: 17px;
+    TouchArea { }
+    // Consume keyboard events here so editing never launches or quits an app.
+    FocusScope {
+        capture-key-pressed(event) => {
+            if (event.text == Key.Escape && !event.modifiers.control && !event.modifiers.alt && !event.modifiers.shift && !event.modifiers.meta) {
+                root.close(); return accept;
+            }
+            return reject;
+        }
+        HorizontalLayout {
+            padding: 0px;
+            spacing: 0px;
+            Rectangle {
+                width: 148px;
+                background: #16171d;
+                border-bottom-left-radius: 17px;
+                VerticalLayout {
+                    padding: 14px;
+                    spacing: 12px;
+                    Text { text: "设置"; color: #858896; font-size: 12px; }
+                    Rectangle {
+                        height: 38px;
+                        border-radius: 7px;
+                        background: #2d293e;
+                        Text { text: "快捷键设置"; color: #c4b7f5; font-size: 13px; horizontal-alignment: center; vertical-alignment: center; }
+                    }
+                    Rectangle { vertical-stretch: 1; }
+                    Button { text: "返回面板"; clicked => { root.close(); } }
+                }
+            }
+            VerticalLayout {
+                padding: 24px;
+                spacing: 12px;
+                Text { text: "快捷键设置"; color: #f0eef8; font-size: 21px; font-weight: 600; }
+                Text { text: "自定义显示 / 隐藏面板的全局快捷键"; color: #858896; font-size: 12px; }
+                Rectangle { height: 6px; }
+                Text { text: "显示 / 隐藏面板"; color: #e7e7ef; font-size: 13px; }
+                Rectangle {
+                    height: 36px;
+                    border-radius: 6px;
+                    background: #22242c;
+                    border-width: 1px;
+                    border-color: hotkey-recorder.has-focus ? #b6a9ff : #34363f;
+                    hotkey-recorder := FocusScope {
+                        accessible-role: button;
+                        accessible-label: "快捷键录入，按下组合键";
+                        key-pressed(event) => {
+                            if ((event.text == Key.Tab || event.text == Key.Backtab)
+                                && !event.modifiers.control && !event.modifiers.alt && !event.modifiers.meta) {
+                                return reject;
+                            }
+                            if (!event.repeat) {
+                                root.capture-key(event.text, event.modifiers.control, event.modifiers.alt, event.modifiers.shift, event.modifiers.meta);
+                            }
+                            return accept;
+                        }
+                        Text {
+                            x: 12px; width: parent.width - 24px; height: parent.height;
+                            text: root.draft == "" ? "请按下快捷键组合…" : root.draft;
+                            color: root.draft == "" ? #858896 : #f0eef8;
+                            font-size: 14px; vertical-alignment: center;
+                            overflow: elide;
+                        }
+                        TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => { hotkey-recorder.focus(); }
+                        }
+                    }
+                }
+                Text { text: "当前：" + root.current-hotkey; color: #858896; font-size: 11px; }
+                Text {
+                    text: "点击上方区域，直接按下组合键，再点击保存。\nmacOS：Alt = Option，Super = Command。";
+                    color: #747785; font-size: 11px;
+                }
+                HorizontalLayout {
+                    spacing: 10px;
+                    Button { text: "恢复默认"; clicked => { root.restore-default(); } }
+                    Rectangle { horizontal-stretch: 1; }
+                    Button { text: "保存快捷键"; primary: true; clicked => { root.save(root.draft); } }
+                }
+                Text {
+                    min-height: 32px;
+                    text: root.message;
+                    color: root.failed ? #ef9b9b : #84c7b5;
+                    font-size: 11px;
+                    wrap: word-wrap;
+                }
+                Rectangle { height: 1px; background: #2c2e37; }
+                Text { text: "面板内快捷键"; color: #858896; font-size: 11px; }
+                ShortcutRow { action: "选择应用"; shortcut: "↑ / ↓"; }
+                ShortcutRow { action: "打开 / 新开实例"; shortcut: "Enter / Shift + Enter"; }
+                ShortcutRow { action: "隐藏 / 刷新 / 退出"; shortcut: "Esc / Ctrl + R / Ctrl + Q"; }
+                Rectangle { vertical-stretch: 1; }
+            }
+        }
+    }
+}

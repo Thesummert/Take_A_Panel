@@ -3,11 +3,16 @@ export component LauncherTray inherits SystemTrayIcon {
     tooltip: "Take a Panel";
     callback show-panel();
     callback refresh-apps();
+    callback shortcut-settings();
     callback quit-server();
     clicked => { root.show-panel(); }
     Menu {
         MenuItem { title: "显示面板"; activated => { root.show-panel(); } }
         MenuItem { title: "刷新应用列表"; activated => { root.refresh-apps(); } }
+        Menu {
+            title: "设置";
+            MenuItem { title: "快捷键设置"; activated => { root.shortcut-settings(); } }
+        }
         MenuSeparator { }
         MenuItem { title: "退出 Take a Panel"; activated => { root.quit-server(); } }
     }

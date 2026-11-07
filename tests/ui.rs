@@ -1,16 +1,190 @@
 use slint::{
     ComponentHandle, ModelRc, VecModel,
-    platform::{Key, WindowEvent},
+    platform::{Key, PointerEventButton, WindowEvent},
 };
 use std::{cell::Cell, rc::Rc};
 
 slint::include_modules!();
+
+#[path = "../src/shortcut_recorder.rs"]
+mod shortcut_recorder;
 
 fn key(ui: &LauncherWindow, text: slint::SharedString) {
     ui.window()
         .dispatch_event(WindowEvent::KeyPressed { text: text.clone() });
     ui.window()
         .dispatch_event(WindowEvent::KeyReleased { text });
+}
+
+fn click(ui: &LauncherWindow, x: f32, y: f32) {
+    let position = slint::LogicalPosition::new(x, y);
+    ui.window()
+        .dispatch_event(WindowEvent::PointerMoved { position });
+    ui.window().dispatch_event(WindowEvent::PointerPressed {
+        position,
+        button: PointerEventButton::Left,
+    });
+    ui.window().dispatch_event(WindowEvent::PointerReleased {
+        position,
+        button: PointerEventButton::Left,
+    });
+}
+
+#[test]
+fn settings_edits_save_without_launching_and_escape_returns_to_search() {
+    slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+        i_slint_backend_testing::TestingBackendOptions {
+            renderer_name: Some("software".into()),
+            ..Default::default()
+        },
+    )))
+    .unwrap();
+    let ui = LauncherWindow::new().unwrap();
+    shortcut_recorder::bind(&ui);
+    ui.set_query("terminal".into());
+    ui.set_configured_hotkey("Alt+Space".into());
+    ui.set_hotkey_label("Alt+Space".into());
+    ui.set_results(ModelRc::new(VecModel::from(vec![AppRow {
+        name: "Terminal".into(),
+        ..Default::default()
+    }])));
+    let launches = Rc::new(Cell::new(0));
+    let calls = launches.clone();
+    ui.on_launch_selected(move |_, _| calls.set(calls.get() + 1));
+    let saves = Rc::new(Cell::new(0));
+    let calls = saves.clone();
+    ui.on_save_shortcut(move |value| {
+        assert_eq!(value, "Ctrl+Alt+Space");
+        calls.set(calls.get() + 1);
+    });
+    let dismissed = Rc::new(Cell::new(false));
+    let result = dismissed.clone();
+    ui.on_dismiss(move || result.set(true));
+    ui.show().unwrap();
+    ui.invoke_focus_search();
+    // Open through the gear and record a real modifier combination.
+    click(&ui, 574., 34.);
+    assert!(ui.get_settings_open());
+    assert_eq!(ui.get_shortcut_draft(), "Alt+Space");
+    assert!(ui.get_shortcut_recording());
+    let control = if cfg!(target_os = "macos") {
+        Key::Meta
+    } else {
+        Key::Control
+    };
+    for modifier in [control, Key::Alt] {
+        ui.window().dispatch_event(WindowEvent::KeyPressed {
+            text: modifier.into(),
+        });
+        assert_eq!(
+            ui.get_shortcut_draft(),
+            "Alt+Space",
+            "modifier-only input must not replace the combination"
+        );
+    }
+    key(&ui, Key::Space.into());
+    for modifier in [Key::Alt, control] {
+        ui.window().dispatch_event(WindowEvent::KeyReleased {
+            text: modifier.into(),
+        });
+    }
+    assert_eq!(ui.get_shortcut_draft(), "Ctrl+Alt+Space");
+    assert_eq!(ui.get_query(), "terminal");
+    key(&ui, Key::Return.into());
+    assert_eq!(saves.get(), 1);
+    assert_eq!(launches.get(), 0);
+    let snapshot = ui.window().take_snapshot().unwrap();
+    if let Some(path) = std::env::var_os("TAKE_A_PANEL_SETTINGS_SNAPSHOT") {
+        let mut encoder = png::Encoder::new(
+            std::fs::File::create(path).unwrap(),
+            snapshot.width(),
+            snapshot.height(),
+        );
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+        encoder
+            .write_header()
+            .unwrap()
+            .write_image_data(snapshot.as_bytes())
+            .unwrap();
+    }
+    ui.set_shortcut_draft("Alt+F2".into());
+    click(&ui, 223., 298.);
+    assert_eq!(ui.get_shortcut_draft(), "Ctrl+Alt+Space");
+    assert_eq!(saves.get(), 1, "restoring defaults must wait for save");
+    click(&ui, 595., 298.);
+    assert_eq!(saves.get(), 2);
+    // Clicking the page's background must not reach an application underneath.
+    click(&ui, 650., 200.);
+    assert_eq!(launches.get(), 0);
+    ui.invoke_focus_search();
+    key(&ui, Key::Escape.into());
+    assert!(!ui.get_settings_open());
+    assert!(!dismissed.get());
+    assert_eq!(ui.get_query(), "terminal");
+    key(&ui, "x".into());
+    assert_eq!(ui.get_query(), "xterminal");
+    ui.invoke_open_settings();
+    ui.set_shortcut_draft("unsaved".into());
+    key(&ui, Key::Escape.into());
+    ui.invoke_open_settings();
+    assert_eq!(ui.get_shortcut_draft(), "Alt+Space");
+    ui.invoke_reset_search();
+    assert!(!ui.get_settings_open());
+    ui.hide().unwrap();
+}
+
+#[test]
+fn native_shortcut_recording_uses_physical_keys_and_waits_for_save() {
+    use slint::winit_030::winit::keyboard::{KeyCode, ModifiersState as Mods};
+    i_slint_backend_testing::init_no_event_loop();
+    let ui = LauncherWindow::new().unwrap();
+    shortcut_recorder::bind(&ui);
+    ui.invoke_open_settings();
+    let saves = Rc::new(Cell::new(0));
+    let calls = saves.clone();
+    ui.on_save_shortcut(move |_| calls.set(calls.get() + 1));
+    for (key, modifiers, expected) in [
+        (KeyCode::Space, Mods::CONTROL | Mods::ALT, "Ctrl+Alt+Space"),
+        (KeyCode::KeyA, Mods::ALT, "Alt+A"),
+        (KeyCode::KeyK, Mods::SUPER | Mods::SHIFT, "Shift+Super+K"),
+        (KeyCode::Digit1, Mods::CONTROL | Mods::SHIFT, "Ctrl+Shift+1"),
+        (
+            KeyCode::Equal,
+            Mods::CONTROL | Mods::SHIFT,
+            "Ctrl+Shift+Equal",
+        ),
+        (KeyCode::F12, Mods::ALT, "Alt+F12"),
+        (KeyCode::Enter, Mods::CONTROL, "Ctrl+Enter"),
+        (KeyCode::ArrowLeft, Mods::SUPER, "Super+ArrowLeft"),
+        (KeyCode::NumpadAdd, Mods::CONTROL, "Ctrl+NumpadAdd"),
+    ] {
+        assert!(shortcut_recorder::capture_native(&ui, key, modifiers));
+        assert_eq!(ui.get_shortcut_draft(), expected);
+        assert!(!ui.get_settings_failed());
+        assert_eq!(
+            saves.get(),
+            0,
+            "recording must not save or register a shortcut"
+        );
+    }
+    for key in [
+        KeyCode::ControlLeft,
+        KeyCode::AltRight,
+        KeyCode::ShiftRight,
+        KeyCode::SuperLeft,
+        KeyCode::Tab,
+    ] {
+        assert!(!shortcut_recorder::capture_native(&ui, key, Mods::empty()));
+        assert_eq!(ui.get_shortcut_draft(), "Ctrl+NumpadAdd");
+    }
+    shortcut_recorder::capture_native(&ui, KeyCode::IntlRo, Mods::CONTROL);
+    assert!(ui.get_settings_failed());
+    assert_eq!(ui.get_shortcut_draft(), "Ctrl+NumpadAdd");
+    shortcut_recorder::capture_native(&ui, KeyCode::Enter, Mods::empty());
+    assert_eq!(saves.get(), 1);
+    shortcut_recorder::capture_native(&ui, KeyCode::Escape, Mods::empty());
+    assert!(!ui.get_settings_open());
 }
 
 #[test]

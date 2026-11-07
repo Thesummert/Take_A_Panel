@@ -14,7 +14,9 @@ cargo run --release
 
 默认运行会自动启动后台 server 并显示面板；已有 server 时直接调用它，客户端随即退出。之后使用 **Ctrl + Alt + Space** 显示 / 隐藏。macOS 上 Alt 对应 Option，Ctrl 对应 Control。成功启动应用或点击窗口外会隐藏面板，server 继续运行。
 
-server 在状态栏显示 **P** 图标，菜单提供“显示面板”“刷新应用列表”“退出 Take a Panel”。macOS 点击图标展开菜单，Windows / Linux 可点击图标显示面板、右键打开菜单。macOS server 使用 Accessory 模式，不占用 Dock。
+server 在状态栏显示 **P** 图标，菜单提供“显示面板”“刷新应用列表”“设置 → 快捷键设置”“退出 Take a Panel”。面板右上角的齿轮图标也可以打开设置，左侧提供“快捷键设置”一栏。macOS 点击图标展开菜单，Windows / Linux 可点击图标显示面板、右键打开菜单。macOS server 使用 Accessory 模式，不占用 Dock。
+
+在快捷键设置中点击录入区域，直接按下实际的组合键，例如按住 Ctrl 和 Alt 后按空格，便会显示 `Ctrl+Alt+Space`，无需输入组合键名称。支持字母、数字、空格、方向键、功能键等，按键按物理位置识别，macOS Option 产生的特殊字符不会影响录入。仅按修饰键不会覆盖组合键；录入当前已启用的快捷键不会隐藏面板。点击“保存快捷键”或按 Enter 即可立即生效，并在下次启动时继续使用。“恢复默认”会填入 `Ctrl+Alt+Space`，点击保存后生效；按 Esc 或“返回面板”放弃未保存的修改。与面板内操作冲突、被其他程序占用或保存失败时显示错误，并保留原快捷键。页面同时列出面板内的固定快捷键供查阅。
 
 ```sh
 # 自定义全局快捷键
@@ -41,7 +43,9 @@ cargo run --release -- --list
 cargo run --release -- --no-hotkey
 ```
 
-也可以设置环境变量 `TAKE_A_PANEL_HOTKEY`，命令行 `--hotkey` 的优先级更高。快捷键配置只在创建 server 时生效，已有 server 时复用原配置；修改配置需先 `--quit` 再启动。快捷键已占用时仍可从 P 菜单或命令行显示面板。
+也可以设置环境变量 `TAKE_A_PANEL_HOTKEY`。启动时优先级为：命令行 `--hotkey` > `TAKE_A_PANEL_HOTKEY` > 设置页保存的快捷键 > 默认值。命令行和环境变量只在创建 server 时生效，已有 server 时复用原配置；设置页可以直接修改运行中的快捷键，无需重启。`--no-hotkey` 只禁用本次启动的快捷键，之后也可以在设置页保存组合键来启用。快捷键已占用时仍可从 P 菜单或命令行显示面板。
+
+快捷键设置保存在 macOS 的 `~/Library/Application Support/TakeAPanel/hotkey`、Windows 的 `%APPDATA%/TakeAPanel/hotkey`、Linux 的 `$XDG_CONFIG_HOME/take-a-panel/hotkey`（默认 `~/.config/take-a-panel/hotkey`）。可通过 `TAKE_A_PANEL_CONFIG_DIR` 指定独立设置目录。
 
 `--server` 在已有 server 时直接返回，不会创建第二个 server。`--show`、`--toggle` 和 `--hidden` 可以自动启动 server；`--hide`、`--refresh`、`--status` 和 `--quit` 不会自动启动 server。关闭终端不会停止自动启动的后台进程，退出请使用 P 菜单、`Ctrl + Q` 或 `--quit`。
 
@@ -109,11 +113,16 @@ cargo build --locked --release
 
 目前已在 macOS 上完成构建与测试。Windows、Linux 的原生窗口焦点和全局快捷键仍需在对应桌面环境下验证。
 
+macOS 上 `cargo test --locked` 还会在主线程运行原生快捷键回归测试，临时注册并释放 `Ctrl+Alt+Shift+Super+F13/F14`，验证连续切换、保存、保存失败回退和重新初始化。该测试需要允许注册系统全局快捷键，配置仅写入临时目录。
+
 ```text
 src/main.rs          窗口生命周期、全局快捷键、后台任务、交互绑定
 src/client.rs        server 检测、后台启动与命令转发
 src/server.rs        单实例文件锁、本地 IPC 与生命周期
 src/options.rs       server / 客户端命令行选项
+src/settings.rs      快捷键配置读取与保存
+src/shortcut_recorder.rs 按键录入与组合键转换
+src/shortcuts.rs     全局快捷键注册与运行时切换
 src/search.rs        搜索与排序
 src/icons/           各平台原生图标读取、解码与缩放
 src/apps/macos.rs    macOS 应用包发现与启动
@@ -121,6 +130,7 @@ src/apps/windows.rs  Windows 开始菜单、Store 应用发现与启动
 src/apps/linux.rs    Linux Desktop Entry 发现与启动
 ui/launcher.slint    暗色圆角界面
 ui/tray.slint        P 状态栏图标与菜单
+ui/settings.slint    设置导航与快捷键设置页
 ```
 
 暂未实现开机自启、拼音搜索、使用历史及安装包；应用发现覆盖上述标准注册位置，不扫描整块磁盘中的便携程序或 macOS 自定义应用目录。

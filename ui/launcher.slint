@@ -1,4 +1,5 @@
 import { ScrollView, Palette } from "std-widgets.slint";
+import { SettingsPanel } from "settings.slint";
 export { LauncherTray } from "tray.slint";
 
 export struct AppRow {
@@ -52,17 +53,41 @@ export component LauncherWindow inherits Window {
     in property <string> error-message;
     in-out property <string> query;
     in-out property <int> selected-index: 0;
+    in property <string> configured-hotkey: "Ctrl+Alt+Space";
+    in property <string> default-hotkey: "Ctrl+Alt+Space";
+    in-out property <bool> settings-open: false;
+    in-out property <string> shortcut-draft;
+    in-out property <string> settings-message;
+    in-out property <bool> settings-failed: false;
+    out property <bool> shortcut-recording: root.settings-open && settings-panel.recording;
     callback query-edited(string);
     callback launch-selected(int, bool);
     callback dismiss();
     callback refresh();
     callback quit();
+    callback save-shortcut(string);
+    callback capture-shortcut(string, bool, bool, bool, bool);
 
-    public function focus-search() {
+    public function open-settings() {
+        root.shortcut-draft = root.configured-hotkey;
+        root.settings-message = "";
+        root.settings-failed = false;
+        root.settings-open = true;
+        settings-panel.focus-editor();
+    }
+
+    public function close-settings() {
+        root.settings-open = false;
         search.focus();
     }
 
+    public function focus-search() {
+        if (root.settings-open) { settings-panel.focus-editor(); }
+        else { search.focus(); }
+    }
+
     public function reset-search() {
+        root.settings-open = false;
         root.query = "";
         root.selected-index = 0;
         results-view.content-y = 0px;
@@ -112,6 +137,26 @@ export component LauncherWindow inherits Window {
                     Text { text: "TAKE A PANEL"; color: #b9b7c8; font-size: 11px; font-weight: 700; vertical-alignment: center; }
                     Rectangle { horizontal-stretch: 1; }
                     Text { text: root.hotkey-label; color: #747785; font-size: 11px; vertical-alignment: center; }
+                    Rectangle {
+                        width: 42px;
+                        Rectangle {
+                            y: (parent.height - 25px) / 2;
+                            width: parent.width; height: 25px; border-radius: 6px;
+                            background: settings-touch.has-hover ? #34303d : transparent;
+                            Image {
+                                x: (parent.width - self.width) / 2;
+                                y: (parent.height - self.height) / 2;
+                                width: 18px; height: 18px;
+                                source: @image-url("assets/settings.svg");
+                            }
+                        }
+                        settings-touch := TouchArea {
+                            accessible-role: button;
+                            accessible-label: "设置";
+                            mouse-cursor: pointer;
+                            clicked => { root.open-settings(); }
+                        }
+                    }
                     Rectangle {
                         width: 25px;
                         Rectangle {
@@ -315,6 +360,20 @@ export component LauncherWindow inherits Window {
                     }
                 }
             }
+        }
+
+        settings-panel := SettingsPanel {
+            x: 1px; y: 45px;
+            width: parent.width - 2px; height: parent.height - 46px;
+            visible: root.settings-open;
+            draft <=> root.shortcut-draft;
+            current-hotkey: root.hotkey-label;
+            message: root.settings-message;
+            failed: root.settings-failed;
+            save(value) => { root.save-shortcut(value); }
+            restore-default => { root.shortcut-draft = root.default-hotkey; root.settings-message = ""; root.settings-failed = false; settings-panel.focus-editor(); }
+            close => { root.close-settings(); }
+            capture-key(text, control, alt, shift, meta) => { root.capture-shortcut(text, control, alt, shift, meta); }
         }
     }
 }

@@ -6,10 +6,13 @@ mod icons;
 mod options;
 mod search;
 mod server;
+mod settings;
+mod shortcut_recorder;
+mod shortcuts;
 mod window_focus;
 
-use anyhow::{Context, Result};
-use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState, hotkey::HotKey};
+use anyhow::Result;
+use global_hotkey::{GlobalHotKeyEvent, HotKeyState};
 use options::Options;
 use slint::{
     ComponentHandle, Model, ModelRc, VecModel,
@@ -18,7 +21,7 @@ use slint::{
 use std::{
     cell::RefCell,
     rc::Rc,
-    sync::{Arc, mpsc},
+    sync::{Arc, atomic::Ordering, mpsc},
     time::Duration,
 };
 use window_focus::WindowFocus;
@@ -41,7 +44,8 @@ struct Controller {
     sender: mpsc::Sender<WorkerEvent>,
     receiver: mpsc::Receiver<WorkerEvent>,
     timer: slint::Timer,
-    hotkey_notice: String,
+    hotkey_notice: RefCell<String>,
+    scan_notice: RefCell<String>,
     focus: Arc<WindowFocus>,
 }
 
@@ -57,11 +61,24 @@ impl Controller {
             sender,
             receiver,
             timer: slint::Timer::default(),
-            hotkey_notice,
+            hotkey_notice: RefCell::new(hotkey_notice),
+            scan_notice: RefCell::new(String::new()),
             focus,
         });
         ui.set_results(ModelRc::from(controller.rows.clone()));
         controller
+    }
+
+    fn update_notice(&self) {
+        if let Some(ui) = self.ui.upgrade() {
+            let notices = [&*self.hotkey_notice.borrow(), &*self.scan_notice.borrow()]
+                .into_iter()
+                .filter(|s| !s.is_empty())
+                .cloned()
+                .collect::<Vec<_>>()
+                .join(" · ");
+            ui.set_notice(notices.into());
+        }
     }
 
     fn apply_icons(&self, batch: Vec<(usize, icons::IconData)>) {
@@ -217,13 +234,8 @@ impl Controller {
                                     catalog.warnings.len()
                                 )
                             };
-                            let notices = [&controller.hotkey_notice, &scan_notice]
-                                .into_iter()
-                                .filter(|s| !s.is_empty())
-                                .cloned()
-                                .collect::<Vec<_>>()
-                                .join(" · ");
-                            ui.set_notice(notices.into());
+                            *controller.scan_notice.borrow_mut() = scan_notice;
+                            controller.update_notice();
                             ui.set_total_count(catalog.apps.len() as i32);
                             *controller.icons.borrow_mut() =
                                 vec![slint::Image::default(); catalog.apps.len()];
@@ -294,47 +306,50 @@ fn register_hotkey(
     ui: &LauncherWindow,
     options: &Options,
     focus: Arc<WindowFocus>,
-) -> (Option<GlobalHotKeyManager>, String) {
-    if options.no_hotkey {
-        return (None, "全局快捷键已禁用；可从 P 菜单或命令行唤出".into());
-    }
-    #[cfg(target_os = "linux")]
-    if std::env::var_os("WAYLAND_DISPLAY").is_some()
-        || std::env::var("XDG_SESSION_TYPE").is_ok_and(|v| v == "wayland")
-    {
-        return (
-            None,
-            "Wayland 暂不支持全局快捷键；可从 P 菜单或命令行唤出".into(),
-        );
-    }
-    let registration = (|| -> Result<_> {
-        let hotkey: HotKey = options.hotkey.parse().context("快捷键格式错误")?;
-        let manager = GlobalHotKeyManager::new().context("无法初始化全局快捷键")?;
-        manager
-            .register(hotkey)
-            .context("无法注册全局快捷键，可能已被其他程序占用")?;
-        let weak = ui.as_weak();
-        GlobalHotKeyEvent::set_event_handler(Some(move |event: GlobalHotKeyEvent| {
-            if event.id != hotkey.id() || event.state != HotKeyState::Pressed {
+) -> (Rc<RefCell<shortcuts::Shortcuts>>, String) {
+    let shortcuts = Rc::new(RefCell::new(shortcuts::Shortcuts::default()));
+    let active_id = shortcuts.borrow().active_id.clone();
+    let weak = ui.as_weak();
+    // The global handler can be installed only once. Read the current ID so
+    // changes and enabling a shortcut after --no-hotkey take effect immediately.
+    GlobalHotKeyEvent::set_event_handler(Some(move |event: GlobalHotKeyEvent| {
+        if active_id.load(Ordering::Acquire) != u64::from(event.id) + 1
+            || event.state != HotKeyState::Pressed
+        {
+            return;
+        }
+        let focus = focus.clone();
+        let active_id = active_id.clone();
+        let _ = weak.upgrade_in_event_loop(move |ui| {
+            if active_id.load(Ordering::Acquire) != u64::from(event.id) + 1 {
                 return;
             }
-            let focus = focus.clone();
-            let _ = weak.upgrade_in_event_loop(move |ui| {
-                if ui.window().is_visible() {
-                    let _ = ui.hide();
-                } else {
-                    present(&ui, true, &focus);
-                }
-            });
-        }));
-        Ok(manager)
-    })();
+            if ui.window().is_visible() && ui.get_shortcut_recording() {
+                ui.set_shortcut_draft(ui.get_configured_hotkey());
+                ui.set_settings_failed(false);
+                ui.set_settings_message("已录入，点击“保存快捷键”生效。".into());
+                return;
+            }
+            if ui.window().is_visible() {
+                let _ = ui.hide();
+            } else {
+                present(&ui, true, &focus);
+            }
+        });
+    }));
+    if options.no_hotkey {
+        return (
+            shortcuts,
+            "全局快捷键已禁用；可从 P 菜单或命令行唤出".into(),
+        );
+    }
+    let registration = shortcuts.borrow_mut().apply(&options.hotkey, || Ok(()));
     match registration {
-        Ok(manager) => (Some(manager), String::new()),
+        Ok(()) => (shortcuts, String::new()),
         Err(error) => {
             let message = format!("{error:#}");
             eprintln!("{message}");
-            (None, format!("{message}；可从 P 菜单或命令行唤出"))
+            (shortcuts, format!("{message}；可从 P 菜单或命令行唤出"))
         }
     }
 }
@@ -382,9 +397,12 @@ fn run_server(options: Options, mut server: server::Server) -> Result<()> {
     };
     backend.select()?;
     let ui = LauncherWindow::new()?;
+    shortcut_recorder::bind(&ui);
     let focus = Arc::new(WindowFocus::default());
     let (hotkey_manager, hotkey_notice) = register_hotkey(&ui, &options, focus.clone());
-    let has_hotkey = hotkey_manager.is_some();
+    let has_hotkey = hotkey_manager.borrow().enabled();
+    ui.set_configured_hotkey(options.hotkey.as_str().into());
+    ui.set_default_hotkey(options::DEFAULT_HOTKEY.into());
     ui.set_hotkey_label(
         if has_hotkey {
             options.hotkey.clone()
@@ -395,6 +413,36 @@ fn run_server(options: Options, mut server: server::Server) -> Result<()> {
     );
     ui.set_notice(hotkey_notice.as_str().into());
     let controller = Controller::new(&ui, hotkey_notice, focus.clone());
+
+    let weak = Rc::downgrade(&controller);
+    let shortcuts = Rc::downgrade(&hotkey_manager);
+    ui.on_save_shortcut(move |value| {
+        let (Some(controller), Some(shortcuts)) = (weak.upgrade(), shortcuts.upgrade()) else {
+            return;
+        };
+        let Some(ui) = controller.ui.upgrade() else {
+            return;
+        };
+        let value = value.trim();
+        let result = shortcuts.borrow_mut().apply(value, || {
+            settings::Settings::new(settings::directory()?).save_hotkey(value)
+        });
+        ui.set_settings_failed(result.is_err());
+        match result {
+            Ok(()) => {
+                ui.set_configured_hotkey(value.into());
+                ui.set_shortcut_draft(value.into());
+                ui.set_hotkey_label(value.into());
+                controller.hotkey_notice.borrow_mut().clear();
+                controller.update_notice();
+                ui.set_settings_message("已保存，快捷键立即生效，下次启动继续使用。".into());
+            }
+            Err(error) => {
+                eprintln!("保存快捷键失败：{error:#}");
+                ui.set_settings_message(format!("{error:#}").into());
+            }
+        }
+    });
 
     let weak = Rc::downgrade(&controller);
     ui.on_query_edited(move |query| {
@@ -431,8 +479,29 @@ fn run_server(options: Options, mut server: server::Server) -> Result<()> {
         slint::CloseRequestResponse::KeepWindowShown
     });
     let window_focus = focus.clone();
+    let weak = ui.as_weak();
+    let mut modifiers = winit::keyboard::ModifiersState::empty();
     ui.window().on_winit_window_event(move |window, event| {
+        if let winit::event::WindowEvent::ModifiersChanged(state) = event {
+            modifiers = state.state();
+        }
+        if let winit::event::WindowEvent::KeyboardInput {
+            event,
+            is_synthetic: false,
+            ..
+        } = event
+            && let Some(ui) = weak.upgrade()
+            && ui.get_shortcut_recording()
+            && event.state == winit::event::ElementState::Pressed
+            && let winit::keyboard::PhysicalKey::Code(key) = event.physical_key
+            && (event.repeat || shortcut_recorder::capture_native(&ui, key, modifiers))
+        {
+            return EventResult::PreventDefault;
+        }
         if let winit::event::WindowEvent::Focused(focused) = event {
+            if !focused {
+                modifiers = winit::keyboard::ModifiersState::empty();
+            }
             let should_hide = window_focus.changed(*focused);
             if should_hide && window.is_visible() {
                 let _ = window.hide();
@@ -453,6 +522,14 @@ fn run_server(options: Options, mut server: server::Server) -> Result<()> {
     tray.on_refresh_apps(move || {
         if let Some(ui) = weak.upgrade() {
             ui.invoke_refresh();
+        }
+    });
+    let weak = ui.as_weak();
+    let settings_focus = focus.clone();
+    tray.on_shortcut_settings(move || {
+        if let Some(ui) = weak.upgrade() {
+            ui.invoke_open_settings();
+            present(&ui, false, &settings_focus);
         }
     });
     let weak = ui.as_weak();

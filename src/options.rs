@@ -15,10 +15,21 @@ pub struct Options {
 
 impl Options {
     pub fn parse() -> Result<Option<Self>> {
-        Self::parse_args(
-            std::env::args().skip(1),
-            std::env::var("TAKE_A_PANEL_HOTKEY").unwrap_or_else(|_| DEFAULT_HOTKEY.into()),
-        )
+        let hotkey = std::env::var("TAKE_A_PANEL_HOTKEY")
+            .ok()
+            .unwrap_or_else(|| {
+                match crate::settings::directory()
+                    .and_then(|path| crate::settings::Settings::new(path).load_hotkey())
+                {
+                    Ok(Some(hotkey)) => hotkey,
+                    Ok(None) => DEFAULT_HOTKEY.into(),
+                    Err(error) => {
+                        eprintln!("无法加载快捷键设置，使用默认值：{error:#}");
+                        DEFAULT_HOTKEY.into()
+                    }
+                }
+            });
+        Self::parse_args(std::env::args().skip(1), hotkey)
     }
 
     fn parse_args(args: impl IntoIterator<Item = String>, hotkey: String) -> Result<Option<Self>> {
@@ -90,12 +101,13 @@ const HELP: &str = "Take a Panel — Rust + Slint 应用启动器
   --refresh         请求 server 刷新应用列表
   --quit            退出后台 server
   --status          查询 server 状态
-  --hotkey <组合键>  server 启动时注册的快捷键（默认 Ctrl+Alt+Space）
+  --hotkey <组合键>  覆盖已保存的快捷键（初始默认 Ctrl+Alt+Space）
   --no-hotkey       server 启动时不注册快捷键
   --list            直接列出应用，不启动 server
   --help            显示帮助
 
-server 常驻状态栏 P 菜单。已有 server 时复用其快捷键设置。
+server 常驻状态栏 P 菜单，可在“设置 → 快捷键设置”中修改并保存快捷键。
+已有 server 时复用其快捷键设置。优先级：--hotkey > TAKE_A_PANEL_HOTKEY > 已保存设置 > 默认值。
 窗口内: ↑/↓ 选择，Enter 启动，Shift+Enter 新开实例，Esc 隐藏，Ctrl+R 刷新，Ctrl+Q 退出。";
 
 #[cfg(test)]
@@ -119,5 +131,20 @@ mod tests {
         assert!(parse(&["--show", "--quit"]).is_err());
         assert!(parse(&["--server", "--show"]).is_err());
         assert!(parse(&["--hotkey"]).is_err());
+    }
+
+    #[test]
+    fn explicit_hotkey_overrides_the_loaded_default() {
+        let options = Options::parse_args(
+            ["--hotkey".into(), "Ctrl+Shift+Space".into()],
+            "Alt+Space".into(),
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(options.hotkey, "Ctrl+Shift+Space");
+        let options = Options::parse_args([], "Alt+Space".into())
+            .unwrap()
+            .unwrap();
+        assert_eq!(options.hotkey, "Alt+Space");
     }
 }
