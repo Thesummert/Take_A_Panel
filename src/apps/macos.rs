@@ -79,6 +79,7 @@ fn read_bundle(path: &Path) -> Application {
             string("CFBundleIdentifier").unwrap_or("")
         ),
         target: LaunchTarget::File(path.to_owned()),
+        icon_name: None,
     }
 }
 

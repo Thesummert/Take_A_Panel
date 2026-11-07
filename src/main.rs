@@ -1,13 +1,14 @@
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 
 mod apps;
+mod icons;
 mod search;
 mod window_focus;
 
 use anyhow::{Context, Result};
 use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState, hotkey::HotKey};
 use slint::{
-    ComponentHandle, ModelRc, VecModel,
+    ComponentHandle, Model, ModelRc, VecModel,
     winit_030::{EventResult, WinitWindowAccessor, winit},
 };
 use std::{
@@ -64,6 +65,8 @@ impl Options {
 
 enum WorkerEvent {
     Catalog(apps::Catalog),
+    Icons(Vec<(usize, icons::IconData)>),
+    ScanFinished,
     Launched(Result<(), String>),
 }
 
@@ -71,6 +74,8 @@ struct Controller {
     ui: slint::Weak<LauncherWindow>,
     apps: RefCell<Vec<apps::Application>>,
     matches: RefCell<Vec<usize>>,
+    icons: RefCell<Vec<slint::Image>>,
+    rows: Rc<VecModel<AppRow>>,
     sender: mpsc::Sender<WorkerEvent>,
     receiver: mpsc::Receiver<WorkerEvent>,
     timer: slint::Timer,
@@ -80,6 +85,48 @@ struct Controller {
 }
 
 impl Controller {
+    fn new(
+        ui: &LauncherWindow,
+        hotkey_notice: String,
+        has_hotkey: bool,
+        focus: Arc<WindowFocus>,
+    ) -> Rc<Self> {
+        let (sender, receiver) = mpsc::channel();
+        let controller = Rc::new(Self {
+            ui: ui.as_weak(),
+            apps: RefCell::new(Vec::new()),
+            matches: RefCell::new(Vec::new()),
+            icons: RefCell::new(Vec::new()),
+            rows: Rc::new(VecModel::default()),
+            sender,
+            receiver,
+            timer: slint::Timer::default(),
+            hotkey_notice,
+            has_hotkey,
+            focus,
+        });
+        ui.set_results(ModelRc::from(controller.rows.clone()));
+        controller
+    }
+
+    fn apply_icons(&self, batch: Vec<(usize, icons::IconData)>) {
+        let mut icons = self.icons.borrow_mut();
+        let matches = self.matches.borrow();
+        for (index, icon) in batch {
+            let Some(cached) = icons.get_mut(index) else {
+                continue;
+            };
+            *cached = icon.into_image();
+            if let Some(row) = matches.iter().position(|&app_index| app_index == index)
+                && let Some(mut data) = self.rows.row_data(row)
+            {
+                data.icon = cached.clone();
+                data.has_icon = true;
+                self.rows.set_row_data(row, data);
+            }
+        }
+    }
+
     fn update_results(&self, query: &str) {
         let Some(ui) = self.ui.upgrade() else {
             return;
@@ -91,8 +138,7 @@ impl Controller {
             .iter()
             .map(|&index| {
                 let app = &apps[index];
-                // A deterministic monogram keeps the first version independent of
-                // OS-specific icon codecs while retaining a consistent visual style.
+                let icon = self.icons.borrow().get(index).cloned().unwrap_or_default();
                 let color_index = app
                     .name
                     .bytes()
@@ -110,11 +156,13 @@ impl Controller {
                         .to_string()
                         .into(),
                     tint: slint::Color::from_argb_encoded(0xff000000 | colors[color_index]),
+                    has_icon: icon.size().width > 0,
+                    icon,
                 }
             })
             .collect::<Vec<_>>();
         *self.matches.borrow_mut() = matches;
-        ui.set_results(ModelRc::new(VecModel::from(rows)));
+        self.rows.set_vec(rows);
         ui.set_selected_index(0);
     }
 
@@ -129,7 +177,28 @@ impl Controller {
         ui.set_error_message("".into());
         let sender = self.sender.clone();
         std::thread::spawn(move || {
-            let _ = sender.send(WorkerEvent::Catalog(apps::discover()));
+            let catalog = apps::discover();
+            let apps = catalog.apps.clone();
+            if sender.send(WorkerEvent::Catalog(catalog)).is_err() {
+                return;
+            }
+            let mut batch = Vec::new();
+            for (index, app) in apps.iter().enumerate() {
+                if let Some(icon) = icons::load(app) {
+                    batch.push((index, icon));
+                }
+                if batch.len() >= 8
+                    && sender
+                        .send(WorkerEvent::Icons(std::mem::take(&mut batch)))
+                        .is_err()
+                {
+                    return;
+                }
+            }
+            if !batch.is_empty() {
+                let _ = sender.send(WorkerEvent::Icons(batch));
+            }
+            let _ = sender.send(WorkerEvent::ScanFinished);
         });
         self.start_pump();
     }
@@ -200,8 +269,15 @@ impl Controller {
                                 .join(" · ");
                             ui.set_notice(notices.into());
                             ui.set_total_count(catalog.apps.len() as i32);
+                            *controller.icons.borrow_mut() =
+                                vec![slint::Image::default(); catalog.apps.len()];
                             *controller.apps.borrow_mut() = catalog.apps;
                             controller.update_results(ui.get_query().as_str());
+                        }
+                        WorkerEvent::Icons(batch) => {
+                            controller.apply_icons(batch);
+                        }
+                        WorkerEvent::ScanFinished => {
                             ui.set_scanning(false);
                         }
                         WorkerEvent::Launched(result) => {
@@ -342,18 +418,7 @@ fn main() -> Result<()> {
         .into(),
     );
     ui.set_notice(hotkey_notice.as_str().into());
-    let (sender, receiver) = mpsc::channel();
-    let controller = Rc::new(Controller {
-        ui: ui.as_weak(),
-        apps: RefCell::new(Vec::new()),
-        matches: RefCell::new(Vec::new()),
-        sender,
-        receiver,
-        timer: slint::Timer::default(),
-        hotkey_notice,
-        has_hotkey,
-        focus: focus.clone(),
-    });
+    let controller = Controller::new(&ui, hotkey_notice, has_hotkey, focus.clone());
 
     let weak = Rc::downgrade(&controller);
     ui.on_query_edited(move |query| {
@@ -414,4 +479,46 @@ fn main() -> Result<()> {
     slint::run_event_loop_until_quit()?;
     drop(hotkey_manager);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn late_icon_batches_update_the_matching_filtered_row_and_are_cached() {
+        i_slint_backend_testing::init_no_event_loop();
+        let ui = LauncherWindow::new().unwrap();
+        let controller = Controller::new(&ui, String::new(), false, Arc::default());
+        *controller.apps.borrow_mut() = ["Alpha", "Beta"]
+            .into_iter()
+            .map(|name| apps::Application {
+                name: name.into(),
+                detail: String::new(),
+                keywords: String::new(),
+                icon_name: None,
+                target: apps::LaunchTarget::File("/unused".into()),
+            })
+            .collect();
+        *controller.icons.borrow_mut() = vec![slint::Image::default(); 2];
+        controller.update_results("beta");
+        assert!(!controller.rows.row_data(0).unwrap().has_icon);
+        let pixel = |rgba: &[u8]| icons::IconData {
+            pixels: slint::SharedPixelBuffer::clone_from_slice(rgba, 1, 1),
+            premultiplied: false,
+        };
+        controller.apply_icons(vec![
+            (0, pixel(&[255, 0, 0, 255])),
+            (1, pixel(&[0, 0, 255, 255])),
+        ]);
+        let row = controller.rows.row_data(0).unwrap();
+        assert_eq!(row.name, "Beta");
+        assert!(row.has_icon);
+        assert_eq!(row.icon.to_rgba8().unwrap().as_bytes(), &[0, 0, 255, 255]);
+        controller.update_results("alpha");
+        let row = controller.rows.row_data(0).unwrap();
+        assert_eq!(row.name, "Alpha");
+        assert!(row.has_icon);
+        assert_eq!(row.icon.to_rgba8().unwrap().as_bytes(), &[255, 0, 0, 255]);
+    }
 }

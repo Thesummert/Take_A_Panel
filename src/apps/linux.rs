@@ -141,6 +141,7 @@ fn parse_entry(text: &str, path: &Path, locale: &str, desktop: &str) -> Option<A
             get("Exec")
         ),
         target: LaunchTarget::File(path.to_owned()),
+        icon_name: Some(localized("Icon")).filter(|name| !name.is_empty()),
     })
 }
 
@@ -228,10 +229,11 @@ mod tests {
 
     #[test]
     fn localizes_and_ignores_action_sections() {
-        let app = parse("[Desktop Entry]\nType=Application\nName=Editor\nName[zh_CN]=编辑器\nExec=editor %U\nKeywords=code;\n[Desktop Action New]\nName=Wrong\n", "zh_CN.UTF-8", "GNOME").unwrap();
+        let app = parse("[Desktop Entry]\nType=Application\nName=Editor\nName[zh_CN]=编辑器\nExec=editor %U\nIcon=editor-icon\nKeywords=code;\n[Desktop Action New]\nName=Wrong\nIcon=wrong-icon\n", "zh_CN.UTF-8", "GNOME").unwrap();
         assert_eq!(app.name, "编辑器");
         assert!(app.keywords.contains("Editor"));
         assert!(app.keywords.contains("code"));
+        assert_eq!(app.icon_name.as_deref(), Some("editor-icon"));
     }
 
     #[test]

@@ -5,6 +5,8 @@ export struct AppRow {
     detail: string,
     monogram: string,
     tint: color,
+    icon: image,
+    has-icon: bool,
 }
 
 component KeyCap inherits Rectangle {
@@ -223,8 +225,14 @@ export component LauncherWindow inherits Window {
                                 Rectangle {
                                     y: (parent.height - 38px) / 2;
                                     width: 38px; height: 38px; border-radius: 10px;
-                                    background: app.tint.with-alpha(0.13);
-                                    Text {
+                                    background: app.has-icon ? transparent : app.tint.with-alpha(0.13);
+                                    if (app.has-icon): Image {
+                                        source: app.icon;
+                                        image-fit: contain;
+                                        width: parent.width;
+                                        height: parent.height;
+                                    }
+                                    if (!app.has-icon): Text {
                                         text: app.monogram; color: app.tint;
                                         font-size: 18px; font-weight: 600;
                                         horizontal-alignment: center; vertical-alignment: center;

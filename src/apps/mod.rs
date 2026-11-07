@@ -21,6 +21,8 @@ pub struct Application {
     pub name: String,
     pub detail: String,
     pub keywords: String,
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    pub icon_name: Option<String>,
     pub target: LaunchTarget,
 }
 

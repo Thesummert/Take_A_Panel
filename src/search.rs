@@ -44,6 +44,7 @@ mod tests {
             name: name.into(),
             detail: String::new(),
             keywords: keywords.into(),
+            icon_name: None,
             target: LaunchTarget::File("/unused".into()),
         }
     }

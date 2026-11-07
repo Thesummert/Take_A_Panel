@@ -28,15 +28,39 @@ fn keyboard_navigation_search_submit_and_empty_results() {
         ("Terminal", "终端", "T", 0x84c7b5),
         ("系统设置", "管理系统偏好设置", "系", 0xb7a4f4),
         ("Safari", "网页浏览器", "S", 0x88b7e4),
-        ("Figma", "界面设计", "F", 0xdc9fb8),
+        ("Zen", "网页浏览器", "Z", 0xdc9fb8),
         ("Notes", "备忘录", "N", 0xe4b77b),
     ]
     .into_iter()
-    .map(|(name, detail, monogram, tint)| AppRow {
-        name: name.into(),
-        detail: detail.into(),
-        monogram: monogram.into(),
-        tint: slint::Color::from_argb_encoded(0xff000000 | tint),
+    .enumerate()
+    .map(|(index, (name, detail, monogram, tint))| {
+        let icon = if let Some(directory) = std::env::var_os("TAKE_A_PANEL_PREVIEW_ICONS") {
+            let file = if name == "系统设置" {
+                "System Settings"
+            } else {
+                name
+            };
+            let path = std::path::Path::new(&directory)
+                .join(file)
+                .with_extension("png");
+            slint::Image::load_from_path(&path).expect("native preview icon")
+        } else if index == 0 {
+            slint::Image::from_rgba8(slint::SharedPixelBuffer::clone_from_slice(
+                &[17u8, 103, 231, 255],
+                1,
+                1,
+            ))
+        } else {
+            slint::Image::default()
+        };
+        AppRow {
+            name: name.into(),
+            detail: detail.into(),
+            monogram: monogram.into(),
+            tint: slint::Color::from_argb_encoded(0xff000000 | tint),
+            has_icon: icon.size().width > 0,
+            icon,
+        }
     })
     .collect::<Vec<_>>();
     ui.set_total_count(rows.len() as i32);
@@ -57,9 +81,19 @@ fn keyboard_navigation_search_submit_and_empty_results() {
     ui.show().unwrap();
     ui.invoke_focus_search();
 
+    let snapshot = ui.window().take_snapshot().unwrap();
+    if std::env::var_os("TAKE_A_PANEL_PREVIEW_ICONS").is_none() {
+        assert!(
+            snapshot
+                .as_slice()
+                .iter()
+                .any(|pixel| (pixel.r, pixel.g, pixel.b, pixel.a) == (17, 103, 231, 255)),
+            "the icon must be rendered in the result row"
+        );
+    }
+
     // Optional real renderer snapshot for reviewing the same UI the app runs.
     if let Some(path) = std::env::var_os("TAKE_A_PANEL_SNAPSHOT") {
-        let snapshot = ui.window().take_snapshot().unwrap();
         let mut encoder = png::Encoder::new(
             std::fs::File::create(path).unwrap(),
             snapshot.width(),

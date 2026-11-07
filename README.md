@@ -40,7 +40,9 @@ cargo run --release -- --no-hotkey
 | Ctrl + Q / 右上角 × | 退出程序、释放快捷键 |
 | 拖动顶部标题区域 | 移动窗口 |
 
-搜索按照名称完全匹配、前缀匹配、包含匹配、关键词匹配排序。应用扫描与启动使用后台线程，空闲时停止轮询。
+搜索按照名称完全匹配、前缀匹配、包含匹配、关键词匹配排序。应用扫描、图标读取与启动使用后台线程，图标分批更新并缓存在内存中，搜索时复用缓存，空闲时停止轮询。
+
+搜索结果显示应用图标：macOS 使用系统 Workspace 接口，Windows 使用 Shell 图标接口（含 Store 应用），Linux 根据 `.desktop` 的 `Icon` 字段解析绝对路径或图标主题中的 PNG / SVG 等文件。读取失败时回退到名称首字标识。
 
 ## 平台支持
 
@@ -87,13 +89,14 @@ cargo build --locked --release
 ```text
 src/main.rs          窗口生命周期、全局快捷键、后台任务、交互绑定
 src/search.rs        搜索与排序
+src/icons/           各平台原生图标读取、解码与缩放
 src/apps/macos.rs    macOS 应用包发现与启动
 src/apps/windows.rs  Windows 开始菜单、Store 应用发现与启动
 src/apps/linux.rs    Linux Desktop Entry 发现与启动
 ui/launcher.slint    暗色圆角界面
 ```
 
-第一版应用图块使用名称首字母 / 首字作为标识。暂未实现系统原生图标提取、开机自启、托盘、拼音搜索、使用历史及安装包；应用发现覆盖上述标准注册位置，不扫描整块磁盘中的便携程序或 macOS 自定义应用目录。
+暂未实现开机自启、托盘、拼音搜索、使用历史及安装包；应用发现覆盖上述标准注册位置，不扫描整块磁盘中的便携程序或 macOS 自定义应用目录。
 
 技术参考：[Slint 窗口与 Winit 集成](https://docs.slint.dev/latest/docs/rust/slint/winit_030/)、[global-hotkey 平台支持](https://docs.rs/global-hotkey/0.8.0/global_hotkey/)、[Desktop Entry 规范](https://specifications.freedesktop.org/desktop-entry/latest-single/)、[Microsoft Get-StartApps](https://learn.microsoft.com/en-us/powershell/module/startlayout/get-startapps)。
 

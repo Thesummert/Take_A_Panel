@@ -52,6 +52,7 @@ pub fn discover() -> Catalog {
                 name,
                 detail: path.display().to_string(),
                 keywords: String::new(),
+                icon_name: None,
                 target: LaunchTarget::File(path.to_owned()),
             });
         }
@@ -85,6 +86,7 @@ pub fn discover() -> Catalog {
                             name: name.into(),
                             detail: id.into(),
                             keywords: id.into(),
+                            icon_name: None,
                             target: LaunchTarget::AppId(id.into()),
                         });
                     }
