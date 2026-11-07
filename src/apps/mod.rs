@@ -16,6 +16,12 @@ pub enum LaunchTarget {
     AppId(String),
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LaunchMode {
+    Normal,
+    NewInstance,
+}
+
 #[derive(Clone, Debug)]
 pub struct Application {
     pub name: String,
@@ -51,9 +57,13 @@ pub fn discover() -> Catalog {
     catalog
 }
 
-pub fn launch(app: &Application) -> Result<()> {
+pub fn launch(app: &Application, mode: LaunchMode) -> Result<()> {
     #[cfg(target_os = "macos")]
-    return macos::launch(app);
+    return macos::launch(app, mode);
+    // Windows Shell and Linux desktop entries issue another launch request;
+    // those applications decide whether to create or reuse an instance.
+    #[cfg(not(target_os = "macos"))]
+    let _ = mode;
     #[cfg(target_os = "windows")]
     return windows::launch(app);
     #[cfg(target_os = "linux")]

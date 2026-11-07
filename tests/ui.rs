@@ -66,9 +66,14 @@ fn keyboard_navigation_search_submit_and_empty_results() {
     ui.set_total_count(rows.len() as i32);
     ui.set_results(ModelRc::new(VecModel::from(rows)));
     ui.set_scanning(false);
-    let submitted = Rc::new(Cell::new(-1));
+    let submitted = Rc::new(Cell::new((-1, false)));
     let result = submitted.clone();
-    ui.on_launch_selected(move |index| result.set(index));
+    let submit_count = Rc::new(Cell::new(0));
+    let calls = submit_count.clone();
+    ui.on_launch_selected(move |index, new_instance| {
+        result.set((index, new_instance));
+        calls.set(calls.get() + 1);
+    });
     let edited = Rc::new(Cell::new(false));
     let result = edited.clone();
     ui.on_query_edited(move |_| result.set(true));
@@ -117,7 +122,24 @@ fn keyboard_navigation_search_submit_and_empty_results() {
     }
     assert_eq!(ui.get_selected_index(), 5);
     key(&ui, Key::Return.into());
-    assert_eq!(submitted.get(), 5);
+    assert_eq!(submitted.get(), (5, false));
+    assert_eq!(submit_count.get(), 1);
+    ui.window().dispatch_event(WindowEvent::KeyPressed {
+        text: Key::Shift.into(),
+    });
+    key(&ui, Key::Return.into());
+    assert_eq!(submitted.get(), (5, true));
+    assert_eq!(
+        submit_count.get(),
+        2,
+        "Shift+Enter must not also trigger normal launch"
+    );
+    ui.window().dispatch_event(WindowEvent::KeyReleased {
+        text: Key::Shift.into(),
+    });
+    key(&ui, Key::Return.into());
+    assert_eq!(submitted.get(), (5, false));
+    assert_eq!(submit_count.get(), 3);
     key(&ui, "x".into());
     assert_eq!(ui.get_query(), "x");
     assert!(edited.get());

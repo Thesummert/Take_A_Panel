@@ -52,7 +52,7 @@ export component LauncherWindow inherits Window {
     in-out property <string> query;
     in-out property <int> selected-index: 0;
     callback query-edited(string);
-    callback launch-selected(int);
+    callback launch-selected(int, bool);
     callback dismiss();
     callback refresh();
     callback quit();
@@ -141,6 +141,10 @@ export component LauncherWindow inherits Window {
                         horizontal-stretch: 1;
                         capture-key-pressed(event) => {
                             if (event.text == Key.Escape) { root.dismiss(); return accept; }
+                            if (event.text == Key.Return && event.modifiers.shift) {
+                                root.launch-selected(root.selected-index, true);
+                                return accept;
+                            }
                             if (event.text == Key.DownArrow) {
                                 root.selected-index = min(root.selected-index + 1, max(0, root.results.length - 1));
                                 root.scroll-to-selection();
@@ -180,7 +184,7 @@ export component LauncherWindow inherits Window {
                                 results-view.content-y = 0px;
                                 root.query-edited(self.text);
                             }
-                            accepted => { root.launch-selected(root.selected-index); }
+                            accepted => { root.launch-selected(root.selected-index, false); }
                         }
                     }
                     KeyCap { label: "ESC"; }
@@ -252,7 +256,7 @@ export component LauncherWindow inherits Window {
                             }
                         }
                         row-touch := TouchArea {
-                            clicked => { root.selected-index = index; root.launch-selected(index); }
+                            clicked => { root.selected-index = index; root.launch-selected(index, false); }
                         }
                     }
                 }
@@ -289,6 +293,9 @@ export component LauncherWindow inherits Window {
                     Rectangle { width: 6px; }
                     KeyCap { label: "Enter"; }
                     Text { text: "打开应用"; font-size: 11px; color: #7d8090; vertical-alignment: center; }
+                    Rectangle { width: 6px; }
+                    KeyCap { label: "Shift + Enter"; }
+                    Text { text: "新开"; font-size: 11px; color: #7d8090; vertical-alignment: center; }
                     Rectangle { horizontal-stretch: 1; }
                     Text {
                         text: root.scanning ? "扫描中" : root.total-count + " 个应用已就绪";

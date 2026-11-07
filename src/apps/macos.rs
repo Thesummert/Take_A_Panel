@@ -1,4 +1,4 @@
-use super::{Application, Catalog, LaunchTarget, run_helper};
+use super::{Application, Catalog, LaunchMode, LaunchTarget, run_helper};
 use anyhow::Result;
 use std::{collections::HashSet, path::Path, process::Command};
 use walkdir::WalkDir;
@@ -83,14 +83,45 @@ fn read_bundle(path: &Path) -> Application {
     }
 }
 
-pub fn launch(app: &Application) -> Result<()> {
+fn launch_command(app: &Application, mode: LaunchMode) -> Command {
     let LaunchTarget::File(path) = &app.target;
-    run_helper(Command::new("/usr/bin/open").arg("-a").arg(path))
+    let mut command = Command::new("/usr/bin/open");
+    if mode == LaunchMode::NewInstance {
+        command.arg("-n");
+    }
+    command.arg("-a").arg(path);
+    command
+}
+
+pub fn launch(app: &Application, mode: LaunchMode) -> Result<()> {
+    run_helper(&mut launch_command(app, mode))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn new_instance_adds_open_n_and_preserves_the_bundle_path() {
+        let app = Application {
+            name: "My Editor".into(),
+            detail: String::new(),
+            keywords: String::new(),
+            icon_name: None,
+            target: LaunchTarget::File("/Applications/My Editor.app".into()),
+        };
+        let normal = launch_command(&app, LaunchMode::Normal);
+        assert_eq!(normal.get_program(), "/usr/bin/open");
+        assert_eq!(
+            normal.get_args().collect::<Vec<_>>(),
+            ["-a", "/Applications/My Editor.app"]
+        );
+        let new = launch_command(&app, LaunchMode::NewInstance);
+        assert_eq!(
+            new.get_args().collect::<Vec<_>>(),
+            ["-n", "-a", "/Applications/My Editor.app"]
+        );
+    }
 
     #[test]
     fn discovers_named_bundles_deduplicates_roots_and_skips_embedded_helpers() {

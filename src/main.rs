@@ -52,7 +52,7 @@ impl Options {
                 "--no-hotkey" => options.no_hotkey = true,
                 "--help" | "-h" => {
                     println!(
-                        "Take a Panel — Rust + Slint 应用启动器\n\n用法: take-a-panel [选项]\n\n  --hotkey <组合键>  设置全局快捷键（默认 Ctrl+Alt+Space）\n  --hidden          启动后隐藏，等待快捷键\n  --no-hotkey       不注册全局快捷键\n  --list            列出已发现应用，不启动界面\n  --help            显示帮助\n\n快捷键也可通过 TAKE_A_PANEL_HOTKEY 环境变量设置。\n窗口内: ↑/↓ 选择，Enter 启动，Esc 隐藏，Ctrl+R 刷新，Ctrl+Q 退出。"
+                        "Take a Panel — Rust + Slint 应用启动器\n\n用法: take-a-panel [选项]\n\n  --hotkey <组合键>  设置全局快捷键（默认 Ctrl+Alt+Space）\n  --hidden          启动后隐藏，等待快捷键\n  --no-hotkey       不注册全局快捷键\n  --list            列出已发现应用，不启动界面\n  --help            显示帮助\n\n快捷键也可通过 TAKE_A_PANEL_HOTKEY 环境变量设置。\n窗口内: ↑/↓ 选择，Enter 启动，Shift+Enter 新开实例，Esc 隐藏，Ctrl+R 刷新，Ctrl+Q 退出。"
                     );
                     return Ok(None);
                 }
@@ -203,7 +203,7 @@ impl Controller {
         self.start_pump();
     }
 
-    fn launch(self: &Rc<Self>, row: i32) {
+    fn launch(self: &Rc<Self>, row: i32, new_instance: bool) {
         let Some(ui) = self.ui.upgrade() else {
             return;
         };
@@ -225,9 +225,14 @@ impl Controller {
             ui.window().set_minimized(true);
         }
         let sender = self.sender.clone();
+        let mode = if new_instance {
+            apps::LaunchMode::NewInstance
+        } else {
+            apps::LaunchMode::Normal
+        };
         std::thread::spawn(move || {
-            let result =
-                apps::launch(&app).map_err(|error| format!("无法打开 {}：{error:#}", app.name));
+            let result = apps::launch(&app, mode)
+                .map_err(|error| format!("无法打开 {}：{error:#}", app.name));
             let _ = sender.send(WorkerEvent::Launched(result));
         });
         self.start_pump();
@@ -427,9 +432,9 @@ fn main() -> Result<()> {
         }
     });
     let weak = Rc::downgrade(&controller);
-    ui.on_launch_selected(move |index| {
+    ui.on_launch_selected(move |index, new_instance| {
         if let Some(c) = weak.upgrade() {
-            c.launch(index);
+            c.launch(index, new_instance);
         }
     });
     let weak = Rc::downgrade(&controller);
