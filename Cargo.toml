@@ -22,6 +22,7 @@ walkdir = "2"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+tempfile = "3"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 plist = "1"
