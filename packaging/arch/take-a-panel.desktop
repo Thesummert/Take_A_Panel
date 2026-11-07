@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Take a Panel
+Comment=Application launcher
+Exec=take-a-panel
+Icon=take-a-panel
+Terminal=false
+Categories=Utility;

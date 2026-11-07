@@ -1,0 +1,43 @@
+pkgname=take-a-panel-git
+pkgver=0.1.0.r12.g77b99a1
+pkgrel=1
+pkgdesc='A cross-platform application launcher built with Rust and Slint'
+arch=('x86_64' 'aarch64')
+url='https://github.com/Thesummert/Take_A_Panel'
+license=('GPL-3.0-only')
+depends=('fontconfig' 'gcc-libs' 'glib2' 'glibc' 'libx11' 'libxcb' 'libxkbcommon' 'libxkbcommon-x11' 'wayland' 'xdg-utils')
+makedepends=('cargo' 'git' 'pkgconf')
+optdepends=('xdg-desktop-portal: native file and directory dialogs'
+            'kdialog: fallback file and directory dialogs'
+            'zenity: fallback file and directory dialogs'
+            'yad: fallback file and directory dialogs')
+provides=('take-a-panel')
+conflicts=('take-a-panel')
+source=("${pkgname}::git+https://github.com/Thesummert/Take_A_Panel.git"
+        'take-a-panel.desktop')
+sha256sums=('SKIP'
+            '3005c3c77db9bfab2df3d2eca10032974a9e7fc7bfb2d51387a0f805fce378c8')
+
+pkgver() {
+  cd "$srcdir/$pkgname"
+  local version
+  version=$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -n 1)
+  printf '%s.r%s.g%s' "$version" "$(git rev-list --count HEAD)" "$(git rev-parse --short HEAD)"
+}
+
+prepare() {
+  cd "$srcdir/$pkgname"
+  cargo fetch --locked
+}
+
+build() {
+  cd "$srcdir/$pkgname"
+  cargo build --frozen --release
+}
+
+package() {
+  cd "$srcdir/$pkgname"
+  install -Dm755 target/release/take-a-panel "$pkgdir/usr/bin/take-a-panel"
+  install -Dm644 "$srcdir/take-a-panel.desktop" "$pkgdir/usr/share/applications/take-a-panel.desktop"
+  install -Dm644 ui/assets/tray-p.svg "$pkgdir/usr/share/icons/hicolor/scalable/apps/take-a-panel.svg"
+}

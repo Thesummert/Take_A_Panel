@@ -153,6 +153,15 @@ iconutil -c icns target/AppIcon.iconset -o packaging/macos/AppIcon.icns
 
 ### Linux 系统依赖
 
+Arch Linux 可以从 Git 源码构建并安装软件包（需要先安装 `base-devel`）：
+
+```sh
+cd packaging/arch
+makepkg -si
+```
+
+该 `take-a-panel-git` 包构建仓库最新提交，并安装桌面启动项。Wayland 下的全局快捷键限制见下文。
+
 Ubuntu / Debian：
 
 ```sh
@@ -206,7 +215,7 @@ scripts/package-macos.sh macOS 应用构建、签名和 ZIP 打包
 packaging/macos/     应用 Info.plist 模板与 ICNS 图标
 ```
 
-暂未实现开机自启、拼音搜索、使用历史及 Windows / Linux 安装包；应用发现覆盖上述标准注册位置，不扫描整块磁盘中的便携程序或 macOS 自定义应用目录。
+暂未实现拼音搜索、使用历史及 Windows 安装包；应用发现覆盖上述标准注册位置，不扫描整块磁盘中的便携程序或 macOS 自定义应用目录。
 
 技术参考：[Slint 窗口与 Winit 集成](https://docs.slint.dev/latest/docs/rust/slint/winit_030/)、[global-hotkey 平台支持](https://docs.rs/global-hotkey/0.8.0/global_hotkey/)、[Desktop Entry 规范](https://specifications.freedesktop.org/desktop-entry/latest-single/)、[Microsoft Get-StartApps](https://learn.microsoft.com/en-us/powershell/module/startlayout/get-startapps)。
 
