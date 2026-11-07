@@ -257,6 +257,9 @@ fn file_search_escape_returns_to_apps_and_settings_do_not_capture_shortcuts() {
     let dismissed = Rc::new(Cell::new(false));
     let result = dismissed.clone();
     ui.on_dismiss(move || result.set(true));
+    let folder_dialogs = Rc::new(Cell::new(0));
+    let calls = folder_dialogs.clone();
+    ui.on_browse_file_folder(move || calls.set(calls.get() + 1));
     ui.show().unwrap();
     ui.set_file_search_mode(true);
     ui.set_query("报告".into());
@@ -264,6 +267,24 @@ fn file_search_escape_returns_to_apps_and_settings_do_not_capture_shortcuts() {
     assert!(ui.get_settings_open());
     assert!(!ui.get_shortcut_recording());
     ui.set_file_roots_draft("~/Documents\n~/Downloads".into());
+    click(&ui, 400., 165.);
+    assert_eq!(folder_dialogs.get(), 1);
+    ui.set_file_folder_dialog_open(true);
+    click(&ui, 400., 165.);
+    assert_eq!(
+        folder_dialogs.get(),
+        1,
+        "only one folder dialog may be open"
+    );
+    ui.set_file_folder_dialog_open(false);
+    ui.set_file_settings_busy(true);
+    click(&ui, 400., 165.);
+    assert_eq!(
+        folder_dialogs.get(),
+        1,
+        "wait for settings to finish saving"
+    );
+    ui.set_file_settings_busy(false);
     let snapshot = ui.window().take_snapshot().unwrap();
     if let Some(path) = std::env::var_os("TAKE_A_PANEL_FILE_SEARCH_SNAPSHOT") {
         let mut encoder = png::Encoder::new(

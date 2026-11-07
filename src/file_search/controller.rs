@@ -196,7 +196,7 @@ impl Controller {
         let Some(ui) = self.ui.upgrade() else {
             return;
         };
-        if ui.get_file_settings_busy() {
+        if ui.get_file_settings_busy() || ui.get_file_folder_dialog_open() {
             return;
         }
         ui.set_file_settings_busy(true);
@@ -346,7 +346,16 @@ impl Controller {
                             let entry = &index.entries[position];
                             AppRow {
                                 name: entry.name.as_str().into(),
-                                detail: entry.path.to_string_lossy().as_ref().into(),
+                                detail: format!(
+                                    "{} · {}",
+                                    if entry.directory {
+                                        "文件夹"
+                                    } else {
+                                        "文件"
+                                    },
+                                    entry.path.display()
+                                )
+                                .into(),
                                 monogram: if entry.directory { "夹" } else { "文" }.into(),
                                 tint: slint::Color::from_rgb_u8(132, 199, 181),
                                 ..Default::default()
@@ -416,21 +425,26 @@ mod tests {
         wait(&controller, || {
             !ui.get_file_settings_busy() && !ui.get_file_indexing() && !ui.get_file_querying()
         });
-        assert_eq!(ui.get_file_count(), 1);
-        assert_eq!(ui.get_results().row_data(0).unwrap().name, "报告.txt");
+        assert_eq!(ui.get_file_count(), 2);
+        let folder = ui.get_results().row_data(0).unwrap();
+        assert_eq!(folder.name, "documents");
+        assert!(folder.detail.starts_with("文件夹 · "));
+        let file = ui.get_results().row_data(1).unwrap();
+        assert_eq!(file.name, "报告.txt");
+        assert!(file.detail.starts_with("文件 · "));
         let saved = settings.load_file_search_roots().unwrap();
         assert_eq!(saved.trim(), root.canonicalize().unwrap().to_str().unwrap());
         ui.invoke_save_file_roots(root.join("missing").to_str().unwrap().into());
         wait(&controller, || !ui.get_file_settings_busy());
         assert!(ui.get_file_settings_failed());
         assert_eq!(settings.load_file_search_roots().unwrap(), saved);
-        assert_eq!(ui.get_file_count(), 1);
-        assert_eq!(ui.get_results().row_data(0).unwrap().name, "报告.txt");
+        assert_eq!(ui.get_file_count(), 2);
+        assert_eq!(ui.get_results().row_data(1).unwrap().name, "报告.txt");
 
         let second = LauncherWindow::new().unwrap();
         let reloaded = Controller::with_settings(&second, Arc::default(), Ok(settings_dir));
         wait(&reloaded, || !second.get_file_indexing());
-        assert_eq!(second.get_file_count(), 1);
+        assert_eq!(second.get_file_count(), 2);
         ui.invoke_save_file_roots("".into());
         wait(&controller, || {
             !ui.get_file_settings_busy() && !ui.get_file_indexing()
@@ -484,7 +498,9 @@ mod tests {
             .send(Event::Indexed(old_generation, old_index))
             .unwrap();
         controller.pump();
-        assert_eq!(ui.get_results().row_data(0).unwrap().name, "second.txt");
+        assert_eq!(ui.get_results().row_count(), 2);
+        assert_eq!(ui.get_results().row_data(0).unwrap().name, "second");
+        assert_eq!(ui.get_results().row_data(1).unwrap().name, "second.txt");
         assert!(
             controller
                 .index

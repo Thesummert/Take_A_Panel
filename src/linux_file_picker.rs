@@ -6,16 +6,40 @@ use zbus::{
 };
 
 pub fn pick_background() -> Result<Option<PathBuf>> {
-    match portal() {
-        Ok(selection) => Ok(selection),
-        Err(portal_error) => {
-            let desktop = std::env::var("XDG_CURRENT_DESKTOP").unwrap_or_default();
-            fallback(&desktop).with_context(|| format!("系统文件选择器不可用：{portal_error:#}"))
+    pick(Kind::Background)
+}
+
+pub fn pick_folder() -> Result<Option<PathBuf>> {
+    pick(Kind::Folder)
+}
+
+#[derive(Clone, Copy)]
+enum Kind {
+    Background,
+    Folder,
+}
+
+impl Kind {
+    fn title(self) -> &'static str {
+        match self {
+            Self::Background => "选择背景图片",
+            Self::Folder => "添加索引文件夹",
         }
     }
 }
 
-fn portal() -> Result<Option<PathBuf>> {
+fn pick(kind: Kind) -> Result<Option<PathBuf>> {
+    match portal(kind) {
+        Ok(selection) => Ok(selection),
+        Err(portal_error) => {
+            let desktop = std::env::var("XDG_CURRENT_DESKTOP").unwrap_or_default();
+            fallback(&desktop, kind)
+                .with_context(|| format!("系统文件选择器不可用：{portal_error:#}"))
+        }
+    }
+}
+
+fn portal(kind: Kind) -> Result<Option<PathBuf>> {
     let connection = Connection::session()?;
     let mut random = [0; 8];
     getrandom::fill(&mut random).map_err(|e| anyhow::anyhow!("{e}"))?;
@@ -41,13 +65,20 @@ fn portal() -> Result<Option<PathBuf>> {
         "/org/freedesktop/portal/desktop",
         "org.freedesktop.portal.FileChooser",
     )?;
-    let filters = vec![("图片", vec![(1u32, "image/png"), (1u32, "image/jpeg")])];
-    let options: HashMap<&str, Value<'_>> = HashMap::from([
+    let mut options: HashMap<&str, Value<'_>> = HashMap::from([
         ("handle_token", Value::from(token.as_str())),
         ("multiple", Value::from(false)),
-        ("filters", Value::from(filters)),
     ]);
-    let handle: OwnedObjectPath = chooser.call("OpenFile", &("", "选择背景图片", options))?;
+    match kind {
+        Kind::Background => {
+            let filters = vec![("图片", vec![(1u32, "image/png"), (1u32, "image/jpeg")])];
+            options.insert("filters", Value::from(filters));
+        }
+        Kind::Folder => {
+            options.insert("directory", Value::from(true));
+        }
+    }
+    let handle: OwnedObjectPath = chooser.call("OpenFile", &("", kind.title(), options))?;
     // Older portal implementations may return a different request path.
     let legacy;
     if handle.as_str() != path {
@@ -75,7 +106,7 @@ fn portal() -> Result<Option<PathBuf>> {
 fn file_uri_path(uri: &str) -> Result<PathBuf> {
     url::Url::parse(uri)?
         .to_file_path()
-        .map_err(|_| anyhow::anyhow!("请选择本地图片文件"))
+        .map_err(|_| anyhow::anyhow!("请选择本地文件或文件夹"))
 }
 
 fn candidates(desktop: &str) -> [&'static str; 3] {
@@ -89,25 +120,33 @@ fn candidates(desktop: &str) -> [&'static str; 3] {
     }
 }
 
-fn fallback(desktop: &str) -> Result<Option<PathBuf>> {
+fn fallback_args(program: &str, kind: Kind) -> Vec<&'static str> {
+    let mut args = match (program == "kdialog", kind) {
+        (true, Kind::Folder) => vec!["--getexistingdirectory", ".", "--title"],
+        (true, Kind::Background) => vec![
+            "--getopenfilename",
+            ".",
+            "*.png *.jpg *.jpeg *.PNG *.JPG *.JPEG|图片",
+            "--title",
+        ],
+        (false, Kind::Folder) => vec!["--file-selection", "--directory", "--title"],
+        (false, Kind::Background) => vec![
+            "--file-selection",
+            "--file-filter=图片 | *.png *.jpg *.jpeg *.PNG *.JPG *.JPEG",
+            "--title",
+        ],
+    };
+    args.push(kind.title());
+    args
+}
+
+fn fallback(desktop: &str, kind: Kind) -> Result<Option<PathBuf>> {
     let mut errors = Vec::new();
     for program in candidates(desktop) {
-        let args: &[&str] = if program == "kdialog" {
-            &[
-                "--getopenfilename",
-                ".",
-                "*.png *.jpg *.jpeg *.PNG *.JPG *.JPEG|图片",
-                "--title",
-                "选择背景图片",
-            ]
-        } else {
-            &[
-                "--file-selection",
-                "--title=选择背景图片",
-                "--file-filter=图片 | *.png *.jpg *.jpeg *.PNG *.JPG *.JPEG",
-            ]
-        };
-        match Command::new(program).args(args).output() {
+        match Command::new(program)
+            .args(fallback_args(program, kind))
+            .output()
+        {
             Ok(output) if output.status.success() => {
                 let path = String::from_utf8(output.stdout)?;
                 let path = path.trim_end_matches(['\r', '\n']);
@@ -123,7 +162,7 @@ fn fallback(desktop: &str) -> Result<Option<PathBuf>> {
         }
     }
     bail!(
-        "没有可用的文件选择器，可手动输入图片路径。{}",
+        "没有可用的文件选择器，可手动输入路径。{}",
         errors.join("；")
     )
 }
@@ -146,5 +185,20 @@ mod tests {
         assert_eq!(candidates("KDE")[0], "kdialog");
         assert_eq!(candidates("ubuntu:GNOME")[0], "zenity");
         assert_eq!(candidates("plasma:KDE")[0], "kdialog");
+    }
+
+    #[test]
+    fn folder_fallbacks_select_directories_without_image_filters() {
+        assert!(fallback_args("kdialog", Kind::Folder).contains(&"--getexistingdirectory"));
+        for program in ["zenity", "yad"] {
+            let args = fallback_args(program, Kind::Folder);
+            assert!(args.contains(&"--directory"));
+            assert!(!args.iter().any(|arg| arg.contains("filter")));
+        }
+        assert!(
+            fallback_args("zenity", Kind::Background)
+                .iter()
+                .any(|arg| arg.contains("file-filter"))
+        );
     }
 }

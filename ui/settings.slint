@@ -32,10 +32,12 @@ export component SettingsPanel inherits Rectangle {
     in-out property <string> file-roots-draft;
     in property <bool> file-indexing;
     in property <bool> file-settings-busy;
+    in property <bool> file-folder-dialog-open;
     in property <bool> file-settings-failed;
     in property <string> file-index-status;
     in property <string> file-settings-message;
     callback save-file-roots(string);
+    callback browse-file-folder();
     callback rebuild-file-index();
     callback save(string);
     callback restore-default();
@@ -204,21 +206,26 @@ export component SettingsPanel inherits Rectangle {
                 spacing: 12px;
                 Text { text: "文件搜索"; color: #f0eef8; font-size: 21px; font-weight: 600; }
                 Text { text: "索引范围：每行一个目录，支持 ~/，无需引号。\n保存后递归索引文件和文件夹；留空可停用索引。"; color: #a2a5b3; font-size: 12px; wrap: word-wrap; }
+                Button {
+                    text: root.file-folder-dialog-open ? "正在选择文件夹…" : "添加文件夹…";
+                    enabled: !root.file-settings-busy && !root.file-folder-dialog-open;
+                    clicked => { root.browse-file-folder(); }
+                }
                 TextEdit {
                     height: 112px;
                     text <=> root.file-roots-draft;
                     placeholder-text: "例如：~/Documents\n~/Downloads";
-                    enabled: !root.file-settings-busy;
+                    enabled: !root.file-settings-busy && !root.file-folder-dialog-open;
                 }
                 Text { text: "跳过隐藏项，遵循 .gitignore / .ignore；不跟随目录内的符号链接。"; color: #858896; font-size: 11px; wrap: word-wrap; }
                 HorizontalLayout {
                     spacing: 10px;
-                    Button { text: "重建索引"; enabled: !root.file-settings-busy; clicked => { root.rebuild-file-index(); } }
-                    Button { text: root.file-settings-busy ? "正在保存…" : "保存并重建索引"; primary: true; enabled: !root.file-settings-busy; clicked => { root.save-file-roots(root.file-roots-draft); } }
+                    Button { text: "重建索引"; enabled: !root.file-settings-busy && !root.file-folder-dialog-open; clicked => { root.rebuild-file-index(); } }
+                    Button { text: root.file-settings-busy ? "正在保存…" : "保存并重建索引"; primary: true; enabled: !root.file-settings-busy && !root.file-folder-dialog-open; clicked => { root.save-file-roots(root.file-roots-draft); } }
                 }
                 Text { text: root.file-index-status; color: #a2a5b3; font-size: 11px; wrap: word-wrap; }
                 Text { text: root.file-settings-message; color: root.file-settings-failed ? #ef9b9b : #84c7b5; font-size: 11px; wrap: word-wrap; }
-                Text { text: "输入 ss 后回车进入，按文件名或路径搜索。\nEnter 打开，Esc 返回应用搜索，Ctrl + R 重建。"; color: #858896; font-size: 11px; wrap: word-wrap; }
+                Text { text: "输入 ss 后回车进入，搜索文件、文件夹或路径。\nEnter 打开，Esc 返回应用搜索，Ctrl + R 重建。"; color: #858896; font-size: 11px; wrap: word-wrap; }
                 Rectangle { vertical-stretch: 1; }
             }
             }

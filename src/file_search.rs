@@ -8,7 +8,9 @@ use std::{
 };
 
 mod controller;
+mod folder_picker;
 pub use controller::Controller;
+pub use folder_picker::bind as bind_folder_picker;
 
 const MAX_ENTRIES: usize = 250_000;
 const MAX_RESULTS: usize = 200;
@@ -153,7 +155,9 @@ fn build_index(
         else {
             continue;
         };
-        if entry.depth() == 0 || !seen.insert(entry.path().to_owned()) {
+        // Include the configured folders themselves, including empty folders.
+        // Overlapping roots must still yield each file or folder only once.
+        if !seen.insert(entry.path().to_owned()) {
             continue;
         }
         if index.entries.len() == MAX_ENTRIES {
@@ -344,14 +348,52 @@ mod tests {
             .iter()
             .map(|entry| entry.name.as_str())
             .collect();
-        assert_eq!(names, ["src", "报告 final.txt"]);
-        assert!(index.entries[0].directory);
-        assert!(!index.entries[1].directory);
+        assert_eq!(names.len(), 3);
+        assert!(
+            index
+                .entries
+                .iter()
+                .any(|entry| entry.path == dir.0 && entry.directory)
+        );
+        assert!(
+            index
+                .entries
+                .iter()
+                .any(|entry| entry.name == "src" && entry.directory)
+        );
+        assert!(
+            index
+                .entries
+                .iter()
+                .any(|entry| entry.name == "报告 final.txt" && !entry.directory)
+        );
         assert_eq!(index.warnings, 0);
         revision.store(2, Ordering::Relaxed);
         assert!(build_index(std::slice::from_ref(&dir.0), &revision, 1, |_| {}).is_none());
         let missing = build_index(&[dir.0.join("missing")], &revision, 2, |_| {}).unwrap();
         assert!(missing.warnings > 0);
+    }
+
+    #[test]
+    fn finds_scope_folders_and_empty_subfolders_before_their_contents() {
+        let dir = TempDir::new();
+        let root = dir.0.join("项目 Projects");
+        let empty = root.join("空文件夹 Empty");
+        std::fs::create_dir_all(&empty).unwrap();
+        std::fs::write(root.join("说明.txt"), "example").unwrap();
+        let revision = AtomicU64::new(1);
+        let index = build_index(&[root.clone(), empty.clone()], &revision, 1, |_| {}).unwrap();
+        assert_eq!(index.entries.len(), 3);
+        let matches = search_index(&index, "项目 PROJECTS", &revision, 1).unwrap();
+        assert_eq!(index.entries[matches.indices[0]].path, root);
+        assert!(index.entries[matches.indices[0]].directory);
+        let matches = search_index(&index, "空文件夹 EMPTY", &revision, 1).unwrap();
+        assert_eq!(matches.total, 1);
+        assert_eq!(index.entries[matches.indices[0]].path, empty);
+        assert!(index.entries[matches.indices[0]].directory);
+        let matches = search_index(&index, "说明.txt", &revision, 1).unwrap();
+        assert_eq!(matches.total, 1);
+        assert!(!index.entries[matches.indices[0]].directory);
     }
 
     #[test]

@@ -488,6 +488,7 @@ fn run_server(options: Options, mut server: server::Server) -> Result<()> {
         })?
     };
     let dialog_open = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    file_search::bind_folder_picker(&ui, focus.clone(), dialog_open.clone());
     let dialog_flag = dialog_open.clone();
     let dialog_ui = ui.as_weak();
     let dialog_focus = focus.clone();

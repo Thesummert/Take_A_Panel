@@ -65,6 +65,7 @@ export component LauncherWindow inherits Window {
     in property <bool> file-indexing;
     in property <bool> file-querying;
     in property <bool> file-settings-busy;
+    in property <bool> file-folder-dialog-open;
     in property <bool> file-settings-failed;
     in property <int> file-count;
     in property <int> file-match-count;
@@ -72,6 +73,7 @@ export component LauncherWindow inherits Window {
     in property <string> file-settings-message;
     in-out property <string> file-roots-draft;
     callback save-file-roots(string);
+    callback browse-file-folder();
     callback rebuild-file-index();
     in property <[AppRow]> results;
     in property <int> total-count;
@@ -270,7 +272,7 @@ export component LauncherWindow inherits Window {
                         }
                         if (root.query == ""): Text {
                             x: 0px; y: 0px; width: parent.width; height: parent.height;
-                            text: root.file-search-mode ? "搜索文件名或路径" : "搜索应用，输入 ss 搜索文件";
+                            text: root.file-search-mode ? "搜索文件、文件夹或路径" : "搜索应用，输入 ss 搜索文件";
                             color: #717482;
                             font-size: 23px;
                             vertical-alignment: center;
@@ -375,13 +377,13 @@ export component LauncherWindow inherits Window {
                     alignment: center; spacing: 12px;
                     Text {
                         text: root.file-search-mode
-                            ? (root.file-indexing ? "正在建立文件索引" : (root.file-querying ? "正在搜索" : "没有找到匹配的文件"))
+                            ? (root.file-indexing ? "正在建立文件索引" : (root.file-querying ? "正在搜索" : "没有找到匹配的文件或文件夹"))
                             : (root.scanning ? "正在整理你的应用" : "没有找到匹配的应用");
                         color: #c3bed6; font-size: 17px; horizontal-alignment: center;
                     }
                     Text {
                         text: root.file-search-mode
-                            ? (root.file-indexing ? "索引在后台建立，完成后自动显示结果" : (root.file-count == 0 ? "请先在设置中添加文件索引范围" : "试试文件名或路径，Ctrl + R 重建索引"))
+                            ? (root.file-indexing ? "索引在后台建立，完成后自动显示结果" : (root.file-count == 0 ? "请先在设置中添加文件索引范围" : "试试文件、文件夹名称或路径，Ctrl + R 重建索引"))
                             : (root.scanning ? "稍等片刻，即可开始" : "试试其他名称，或按 Ctrl + R 重新扫描");
                         color: #747785; font-size: 12px; horizontal-alignment: center;
                     }
@@ -408,7 +410,7 @@ export component LauncherWindow inherits Window {
                     Text { text: "选择"; font-size: 11px; color: #7d8090; vertical-alignment: center; }
                     Rectangle { width: 6px; }
                     KeyCap { label: "Enter"; }
-                    Text { text: root.file-search-mode ? "打开文件" : "打开应用"; font-size: 11px; color: #7d8090; vertical-alignment: center; }
+                    Text { text: root.file-search-mode ? "打开" : "打开应用"; font-size: 11px; color: #7d8090; vertical-alignment: center; }
                     Rectangle { width: 6px; }
                     if !root.file-search-mode: KeyCap { label: "Shift + Enter"; }
                     if !root.file-search-mode: Text { text: "新开"; font-size: 11px; color: #7d8090; vertical-alignment: center; }
@@ -455,10 +457,12 @@ export component LauncherWindow inherits Window {
             file-roots-draft <=> root.file-roots-draft;
             file-indexing: root.file-indexing;
             file-settings-busy: root.file-settings-busy;
+            file-folder-dialog-open: root.file-folder-dialog-open;
             file-settings-failed: root.file-settings-failed;
             file-index-status: root.file-index-status;
             file-settings-message: root.file-settings-message;
             save-file-roots(value) => { root.save-file-roots(value); }
+            browse-file-folder => { root.browse-file-folder(); }
             rebuild-file-index => { root.rebuild-file-index(); }
             draft <=> root.shortcut-draft;
             current-hotkey: root.hotkey-label;
