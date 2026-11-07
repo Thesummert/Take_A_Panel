@@ -1,0 +1,304 @@
+import { ScrollView, Palette } from "std-widgets.slint";
+
+export struct AppRow {
+    name: string,
+    detail: string,
+    monogram: string,
+    tint: color,
+}
+
+component KeyCap inherits Rectangle {
+    in property <string> label;
+    min-height: 22px;
+    width: max(24px, label-text.preferred-width + 12px);
+    Rectangle {
+        y: (parent.height - self.height) / 2;
+        width: parent.width;
+        height: 22px;
+        border-radius: 5px;
+        background: #24262d;
+        border-width: 1px;
+        border-color: #34363f;
+        label-text := Text {
+            text: root.label;
+            color: #a2a5b3;
+            font-size: 11px;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+    }
+}
+
+export component LauncherWindow inherits Window {
+    title: "Take a Panel";
+    width: 680px;
+    height: 540px;
+    no-frame: true;
+    always-on-top: true;
+    background: transparent;
+    default-font-size: 14px;
+    default-font-weight: 400;
+    init => { Palette.color-scheme = ColorScheme.dark; }
+
+    in property <[AppRow]> results;
+    in property <int> total-count;
+    in property <bool> scanning: true;
+    in property <bool> launching: false;
+    in property <string> hotkey-label: "Ctrl + Alt + Space";
+    in property <string> notice;
+    in property <string> error-message;
+    in-out property <string> query;
+    in-out property <int> selected-index: 0;
+    callback query-edited(string);
+    callback launch-selected(int);
+    callback dismiss();
+    callback refresh();
+    callback quit();
+
+    public function focus-search() {
+        search.focus();
+    }
+
+    public function reset-search() {
+        root.query = "";
+        root.selected-index = 0;
+        results-view.content-y = 0px;
+        root.query-edited("");
+        search.focus();
+    }
+
+    function scroll-to-selection() {
+        if (root.selected-index * 66px < -results-view.content-y) {
+            results-view.content-y = -root.selected-index * 66px;
+        }
+        if ((root.selected-index + 1) * 66px > -results-view.content-y + results-view.visible-height) {
+            results-view.content-y = results-view.visible-height - (root.selected-index + 1) * 66px;
+        }
+    }
+
+    Rectangle {
+        x: 12px;
+        y: 12px;
+        width: parent.width - 24px;
+        height: parent.height - 24px;
+        background: #191a20;
+        border-radius: 18px;
+        border-color: #363841;
+        border-width: 1px;
+        clip: true;
+
+        VerticalLayout {
+            spacing: 0px;
+            padding: 0px;
+
+            Rectangle {
+                height: 45px;
+                WindowMoveArea { }
+                HorizontalLayout {
+                    padding-left: 22px;
+                    padding-right: 18px;
+                    spacing: 9px;
+                    Rectangle {
+                        width: 7px;
+                        Rectangle {
+                            y: (parent.height - 7px) / 2;
+                            width: 7px; height: 7px; border-radius: 4px;
+                            background: #a89bff;
+                        }
+                    }
+                    Text { text: "TAKE A PANEL"; color: #b9b7c8; font-size: 11px; font-weight: 700; vertical-alignment: center; }
+                    Rectangle { horizontal-stretch: 1; }
+                    Text { text: root.hotkey-label; color: #747785; font-size: 11px; vertical-alignment: center; }
+                    Rectangle {
+                        width: 25px;
+                        Rectangle {
+                            y: (parent.height - 25px) / 2;
+                            width: 25px; height: 25px; border-radius: 6px;
+                            background: quit-touch.has-hover ? #34303d : transparent;
+                            Text { text: "×"; color: #9193a2; horizontal-alignment: center; vertical-alignment: center; font-size: 19px; }
+                        }
+                        quit-touch := TouchArea { clicked => { root.quit(); } }
+                    }
+                }
+            }
+
+            Rectangle {
+                height: 68px;
+                HorizontalLayout {
+                    padding-left: 24px; padding-right: 24px; spacing: 16px;
+                    Rectangle {
+                        width: 24px;
+                        Path {
+                            y: (parent.height - 24px) / 2;
+                            width: 24px; height: 24px;
+                            commands: "M 16 16 L 22 22 M 18 10 A 8 8 0 1 1 2 10 A 8 8 0 1 1 18 10";
+                            stroke: #b6a9ff; stroke-width: 1.7px;
+                        }
+                    }
+                    FocusScope {
+                        horizontal-stretch: 1;
+                        capture-key-pressed(event) => {
+                            if (event.text == Key.Escape) { root.dismiss(); return accept; }
+                            if (event.text == Key.DownArrow) {
+                                root.selected-index = min(root.selected-index + 1, max(0, root.results.length - 1));
+                                root.scroll-to-selection();
+                                return accept;
+                            }
+                            if (event.text == Key.UpArrow) {
+                                root.selected-index = max(root.selected-index - 1, 0);
+                                root.scroll-to-selection();
+                                return accept;
+                            }
+                            if (event.modifiers.control && (event.text == "r" || event.text == "R")) {
+                                root.refresh(); return accept;
+                            }
+                            if (event.modifiers.control && (event.text == "q" || event.text == "Q")) {
+                                root.quit(); return accept;
+                            }
+                            return reject;
+                        }
+                        if (root.query == ""): Text {
+                            x: 0px; y: 0px; width: parent.width; height: parent.height;
+                            text: "搜索应用，随即出发";
+                            color: #717482;
+                            font-size: 23px;
+                            vertical-alignment: center;
+                        }
+                        search := TextInput {
+                            x: 0px; y: 0px; width: parent.width; height: parent.height;
+                            text <=> root.query;
+                            color: #f0eef8;
+                            font-size: 23px;
+                            vertical-alignment: center;
+                            single-line: true;
+                            selection-background-color: #6d5bc5;
+                            selection-foreground-color: white;
+                            edited => {
+                                root.selected-index = 0;
+                                results-view.content-y = 0px;
+                                root.query-edited(self.text);
+                            }
+                            accepted => { root.launch-selected(root.selected-index); }
+                        }
+                    }
+                    KeyCap { label: "ESC"; }
+                }
+            }
+
+            Rectangle { height: 1px; background: #2c2e37; }
+
+            Rectangle {
+                height: 36px;
+                HorizontalLayout {
+                    padding-left: 22px; padding-right: 22px;
+                    Text {
+                        text: root.scanning ? "正在发现应用…" : (root.query == "" ? "全部应用" : "搜索结果");
+                        color: #858896; font-size: 11px;
+                        vertical-alignment: center;
+                    }
+                    Rectangle { horizontal-stretch: 1; }
+                    Text { text: root.results.length + " 个"; color: #686c7b; font-size: 11px; vertical-alignment: center; }
+                }
+            }
+
+            Rectangle {
+                vertical-stretch: 1;
+                results-view := ScrollView {
+                    x: 10px; width: parent.width - 20px;
+                    height: parent.height;
+                    content-height: root.results.length * 66px;
+                    horizontal-scrollbar-policy: always-off;
+                    for app[index] in root.results: Rectangle {
+                        x: 0px; y: index * 66px;
+                        width: results-view.visible-width;
+                        height: 64px;
+                        border-radius: 10px;
+                        background: root.selected-index == index ? #2d293e : (row-touch.has-hover ? #22242c : transparent);
+                        border-width: root.selected-index == index ? 1px : 0px;
+                        border-color: #49405f;
+                        HorizontalLayout {
+                            padding-left: 12px; padding-right: 14px; spacing: 13px;
+                            Rectangle {
+                                width: 38px;
+                                Rectangle {
+                                    y: (parent.height - 38px) / 2;
+                                    width: 38px; height: 38px; border-radius: 10px;
+                                    background: app.tint.with-alpha(0.13);
+                                    Text {
+                                        text: app.monogram; color: app.tint;
+                                        font-size: 18px; font-weight: 600;
+                                        horizontal-alignment: center; vertical-alignment: center;
+                                    }
+                                }
+                            }
+                            VerticalLayout {
+                                spacing: 4px;
+                                alignment: center;
+                                Text { text: app.name; color: #e7e7ef; font-size: 14px; overflow: elide; }
+                                Text { text: app.detail; color: #818391; font-size: 11px; overflow: elide; }
+                            }
+                            if (root.selected-index == index): Text {
+                                text: root.launching ? "…" : "打开";
+                                color: #b2a2e8; font-size: 11px; width: 30px;
+                                vertical-alignment: center;
+                            }
+                        }
+                        row-touch := TouchArea {
+                            clicked => { root.selected-index = index; root.launch-selected(index); }
+                        }
+                    }
+                }
+                if (root.results.length == 0): VerticalLayout {
+                    alignment: center; spacing: 12px;
+                    Text {
+                        text: root.scanning ? "正在整理你的应用" : "没有找到匹配的应用";
+                        color: #c3bed6; font-size: 17px; horizontal-alignment: center;
+                    }
+                    Text {
+                        text: root.scanning ? "稍等片刻，即可开始" : "试试其他名称，或按 Ctrl + R 重新扫描";
+                        color: #747785; font-size: 12px; horizontal-alignment: center;
+                    }
+                }
+            }
+
+            if (root.error-message != "" || root.notice != ""): Rectangle {
+                height: 34px;
+                Text {
+                    x: 22px; width: parent.width - 44px;
+                    text: root.error-message != "" ? root.error-message : root.notice;
+                    color: root.error-message != "" ? #ef9b9b : #b5a47a;
+                    font-size: 11px; overflow: elide; vertical-alignment: center;
+                }
+            }
+
+            Rectangle { height: 1px; background: #2c2e37; }
+            Rectangle {
+                height: 44px;
+                HorizontalLayout {
+                    padding-left: 20px; padding-right: 20px; spacing: 7px;
+                    KeyCap { label: "↑ ↓"; }
+                    Text { text: "选择"; font-size: 11px; color: #7d8090; vertical-alignment: center; }
+                    Rectangle { width: 6px; }
+                    KeyCap { label: "Enter"; }
+                    Text { text: "打开应用"; font-size: 11px; color: #7d8090; vertical-alignment: center; }
+                    Rectangle { horizontal-stretch: 1; }
+                    Text {
+                        text: root.scanning ? "扫描中" : root.total-count + " 个应用已就绪";
+                        font-size: 11px; color: #747785;
+                        vertical-alignment: center;
+                    }
+                    Rectangle {
+                        width: 28px;
+                        Rectangle {
+                            y: (parent.height - 26px) / 2;
+                            width: 28px; height: 26px; border-radius: 6px;
+                            background: refresh-touch.has-hover ? #30323b : transparent;
+                            Text { text: "↻"; color: #9893b5; font-size: 19px; horizontal-alignment: center; vertical-alignment: center; }
+                        }
+                        refresh-touch := TouchArea { clicked => { root.refresh(); } }
+                    }
+                }
+            }
+        }
+    }
+}
