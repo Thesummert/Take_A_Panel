@@ -1,5 +1,5 @@
 pkgname=take-a-panel-git
-pkgver=0.1.0.r12.g77b99a1
+pkgver=0.1.0.r13.g2a2609c
 pkgrel=1
 pkgdesc='A cross-platform application launcher built with Rust and Slint'
 arch=('x86_64' 'aarch64')

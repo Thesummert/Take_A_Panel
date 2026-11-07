@@ -162,6 +162,16 @@ makepkg -si
 
 该 `take-a-panel-git` 包构建仓库最新提交，并安装桌面启动项。Wayland 下的全局快捷键限制见下文。
 
+使用当前本地工作区（包括未提交的修改）离线构建 Arch 安装包：
+
+```sh
+./scripts/package-arch-local.sh
+# 可选：指定软件包输出目录
+./scripts/package-arch-local.sh /path/to/output
+```
+
+脚本使用本地 Cargo 缓存，不拉取 Git 仓库或下载依赖；需要预先安装打包依赖并缓存 Cargo 依赖。默认输出到 `dist/`，包名为 `take-a-panel-local`，与 `take-a-panel-git` 冲突。
+
 Ubuntu / Debian：
 
 ```sh
