@@ -44,6 +44,12 @@ export component LauncherWindow inherits Window {
     default-font-weight: 400;
     init => { Palette.color-scheme = ColorScheme.dark; }
 
+    in property <image> background-image;
+    in-out property <string> background-path;
+    in-out property <float> background-opacity: 1;
+    in-out property <float> background-blur: 0;
+    callback save-appearance(string, float, float);
+    callback browse-background();
     in property <[AppRow]> results;
     in property <int> total-count;
     in property <bool> scanning: true;
@@ -115,6 +121,7 @@ export component LauncherWindow inherits Window {
         border-width: 1px;
         clip: true;
 
+        Image { width: parent.width; height: parent.height; source: root.background-image; image-fit: cover; opacity: root.background-opacity; }
         VerticalLayout {
             spacing: 0px;
             padding: 0px;
@@ -366,6 +373,11 @@ export component LauncherWindow inherits Window {
             x: 1px; y: 45px;
             width: parent.width - 2px; height: parent.height - 46px;
             visible: root.settings-open;
+            background-path <=> root.background-path;
+            background-opacity <=> root.background-opacity;
+            background-blur <=> root.background-blur;
+            save-appearance(path, opacity, blur) => { root.save-appearance(path, opacity, blur); }
+            browse-background => { root.browse-background(); }
             draft <=> root.shortcut-draft;
             current-hotkey: root.hotkey-label;
             message: root.settings-message;

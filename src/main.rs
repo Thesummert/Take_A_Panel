@@ -30,6 +30,21 @@ use window_focus::WindowFocus;
 
 slint::include_modules!();
 
+fn background_image(path: &str, blur: f32) -> Result<slint::Image> {
+    if path.is_empty() {
+        return Ok(slint::Image::default());
+    }
+    let image = image::open(path)?.thumbnail(1320, 1056).to_rgba8();
+    let image = if blur > 0.0 {
+        image::imageops::blur(&image, blur)
+    } else {
+        image
+    };
+    Ok(slint::Image::from_rgba8(
+        slint::SharedPixelBuffer::clone_from_slice(image.as_raw(), image.width(), image.height()),
+    ))
+}
+
 enum WorkerEvent {
     Catalog(apps::Catalog),
     Icons(Vec<(usize, icons::IconData)>),
@@ -400,6 +415,55 @@ fn run_server(options: Options, mut server: server::Server) -> Result<()> {
     backend.select()?;
     let ui = LauncherWindow::new()?;
     shortcut_recorder::bind(&ui);
+    if let Ok(dir) = settings::directory() {
+        if let Ok(data) = std::fs::read_to_string(dir.join("appearance")) {
+            let mut lines = data.lines();
+            if let (Some(opacity), Some(blur), Some(path)) =
+                (lines.next(), lines.next(), lines.next())
+            {
+                if let (Ok(opacity), Ok(blur)) = (opacity.parse::<f32>(), blur.parse::<f32>()) {
+                    if opacity.is_finite() && blur.is_finite() {
+                        let opacity = opacity.clamp(0.0, 1.0);
+                        let blur = blur.clamp(0.0, 30.0);
+                        if let Ok(image) = background_image(path, blur) {
+                            ui.set_background_image(image);
+                            ui.set_background_path(path.into());
+                            ui.set_background_opacity(opacity);
+                            ui.set_background_blur(blur);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    let appearance_ui = ui.as_weak();
+    ui.on_save_appearance(move |path, opacity, blur| {
+        let Some(ui) = appearance_ui.upgrade() else {
+            return;
+        };
+        let result = (|| -> Result<slint::Image> {
+            let path = path.trim();
+            anyhow::ensure!(!path.contains(['\n', '\r']), "路径不能包含换行符");
+            let image = background_image(path, blur)?;
+            let dir = settings::directory()?;
+            std::fs::create_dir_all(&dir)?;
+            std::fs::write(
+                dir.join("appearance"),
+                format!("{opacity}\n{blur}\n{path}\n"),
+            )?;
+            Ok(image)
+        })();
+        ui.set_settings_failed(result.is_err());
+        match result {
+            Ok(image) => {
+                ui.set_background_image(image);
+                ui.set_settings_message("外观已保存。".into());
+            }
+            Err(error) => {
+                ui.set_settings_message(format!("保存外观失败：{error:#}").into());
+            }
+        }
+    });
     let focus = Arc::new(WindowFocus::default());
     #[cfg(target_os = "macos")]
     let _reopen_handler = {
@@ -410,6 +474,43 @@ fn run_server(options: Options, mut server: server::Server) -> Result<()> {
             let _ = weak.upgrade_in_event_loop(move |ui| present(&ui, true, &focus));
         })?
     };
+    let dialog_open = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let dialog_flag = dialog_open.clone();
+    let dialog_ui = ui.as_weak();
+    let dialog_focus = focus.clone();
+    ui.on_browse_background(move || {
+        dialog_flag.store(true, Ordering::Relaxed);
+        let flag = dialog_flag.clone();
+        let weak = dialog_ui.clone();
+        let focus = dialog_focus.clone();
+        std::thread::spawn(move || {
+            #[cfg(target_os = "macos")]
+            let result = std::process::Command::new("osascript")
+                .args(["-e", "POSIX path of (choose file with prompt \"选择背景图片\" of type {\"public.png\", \"public.jpeg\"})"]).output();
+            #[cfg(target_os = "linux")]
+            let result = std::process::Command::new("zenity")
+                .args(["--file-selection", "--title=选择背景图片", "--file-filter=图片 | *.png *.jpg *.jpeg *.PNG *.JPG *.JPEG"]).output();
+            #[cfg(target_os = "windows")]
+            let result = std::process::Command::new("powershell")
+                .args(["-NoProfile", "-STA", "-Command", "Add-Type -AssemblyName System.Windows.Forms; $d = New-Object System.Windows.Forms.OpenFileDialog; $d.Filter = '图片|*.png;*.jpg;*.jpeg'; if ($d.ShowDialog() -eq 'OK') { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8; [Console]::Write($d.FileName) }"]).output();
+            let _ = weak.upgrade_in_event_loop(move |ui| {
+                focus.begin_presentation();
+                flag.store(false, Ordering::Relaxed);
+                match result {
+                    Ok(output) if output.status.success() => {
+                        let path = String::from_utf8_lossy(&output.stdout);
+                        let path = path.trim_end_matches(['\r', '\n']);
+                        if !path.is_empty() { ui.set_background_path(path.into()); }
+                    }
+                    Err(error) => {
+                        ui.set_settings_failed(true);
+                        ui.set_settings_message(format!("无法打开文件选择器：{error}").into());
+                    }
+                    _ => {}
+                }
+            });
+        });
+    });
     let (hotkey_manager, hotkey_notice) = register_hotkey(&ui, &options, focus.clone());
     let has_hotkey = hotkey_manager.borrow().enabled();
     ui.set_configured_hotkey(options.hotkey.as_str().into());
@@ -514,7 +615,7 @@ fn run_server(options: Options, mut server: server::Server) -> Result<()> {
                 modifiers = winit::keyboard::ModifiersState::empty();
             }
             let should_hide = window_focus.changed(*focused);
-            if should_hide && window.is_visible() {
+            if should_hide && !dialog_open.load(Ordering::Relaxed) && window.is_visible() {
                 let _ = window.hide();
             }
         }
