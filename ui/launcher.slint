@@ -86,6 +86,9 @@ export component LauncherWindow inherits Window {
     in property <string> error-message;
     in-out property <string> query;
     in-out property <int> selected-index: 0;
+    property <bool> calculation-selected: !root.file-search-mode && !root.clipboard-mode
+        && root.selected-index >= 0 && root.selected-index < root.results.length
+        && root.results[root.selected-index].monogram == "=";
     in property <string> configured-hotkey: "Ctrl+Alt+Space";
     in property <string> default-hotkey: "Ctrl+Alt+Space";
     in-out property <bool> settings-open: false;
@@ -367,7 +370,7 @@ export component LauncherWindow inherits Window {
                                 Text { text: app.detail; color: #818391; font-size: 11px; overflow: elide; }
                             }
                             if (root.selected-index == index): Text {
-                                text: root.launching ? "…" : (app.monogram == "SS" || app.monogram == "CLP" ? "进入" : (root.clipboard-mode ? "复制" : "打开"));
+                                text: root.launching ? "…" : (app.monogram == "SS" || app.monogram == "CLP" ? "进入" : (root.clipboard-mode || app.monogram == "=" ? "复制" : "打开"));
                                 color: #b2a2e8; font-size: 11px; width: 30px;
                                 vertical-alignment: center;
                             }
@@ -414,10 +417,10 @@ export component LauncherWindow inherits Window {
                     Text { text: "选择"; font-size: 11px; color: #7d8090; vertical-alignment: center; }
                     Rectangle { width: 6px; }
                     KeyCap { label: "Enter"; }
-                    Text { text: root.clipboard-mode ? "复制" : (root.file-search-mode ? "打开" : "打开应用"); font-size: 11px; color: #7d8090; vertical-alignment: center; }
+                    Text { text: root.clipboard-mode || root.calculation-selected ? "复制" : (root.file-search-mode ? "打开" : "打开应用"); font-size: 11px; color: #7d8090; vertical-alignment: center; }
                     Rectangle { width: 6px; }
-                    if !root.file-search-mode && !root.clipboard-mode: KeyCap { label: "Shift + Enter"; }
-                    if !root.file-search-mode && !root.clipboard-mode: Text { text: "新开"; font-size: 11px; color: #7d8090; vertical-alignment: center; }
+                    if !root.file-search-mode && !root.clipboard-mode && !root.calculation-selected: KeyCap { label: "Shift + Enter"; }
+                    if !root.file-search-mode && !root.clipboard-mode && !root.calculation-selected: Text { text: "新开"; font-size: 11px; color: #7d8090; vertical-alignment: center; }
                     Rectangle { horizontal-stretch: 1; }
                     Text {
                         text: root.clipboard-mode ? "最多保存 100 条记录" : root.file-search-mode ? root.file-count + " 项已索引" : (root.scanning ? "扫描中" : root.total-count + " 个应用已就绪");

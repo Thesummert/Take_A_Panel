@@ -3,6 +3,7 @@
 mod appearance;
 mod apps;
 mod autostart;
+mod calculator;
 mod client;
 mod clipboard;
 mod file_search;
@@ -53,6 +54,7 @@ enum WorkerEvent {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ResultTarget {
+    Calculation,
     App(usize),
     Files,
     Clipboard,
@@ -63,6 +65,7 @@ struct Controller {
     apps: RefCell<Vec<apps::Application>>,
     launch_history: RefCell<launch_history::History>,
     matches: RefCell<Vec<ResultTarget>>,
+    calculation: RefCell<Option<String>>,
     clipboard: RefCell<clipboard::History>,
     clipboard_matches: RefCell<Vec<clipboard::Entry>>,
     icons: RefCell<Vec<slint::Image>>,
@@ -106,6 +109,7 @@ impl Controller {
             apps: RefCell::new(Vec::new()),
             launch_history: RefCell::new(history),
             matches: RefCell::new(Vec::new()),
+            calculation: RefCell::new(None),
             clipboard: RefCell::new(clipboard::History::default()),
             clipboard_matches: RefCell::new(Vec::new()),
             icons: RefCell::new(Vec::new()),
@@ -177,11 +181,24 @@ impl Controller {
         if query.trim().eq_ignore_ascii_case("clp") {
             matches.insert(0, ResultTarget::Clipboard);
         }
+        let calculation = calculator::evaluate(query);
+        if calculation.is_some() {
+            matches.insert(0, ResultTarget::Calculation);
+        }
         let colors = [0xb7a4f4, 0x84c7b5, 0xe4b77b, 0x88b7e4, 0xdc9fb8];
         let rows = matches
             .iter()
             .map(|&index| {
                 let index = match index {
+                    ResultTarget::Calculation => {
+                        return AppRow {
+                            name: calculation.as_deref().unwrap_or_default().into(),
+                            detail: "计算结果 · 按 Enter 复制到剪贴板".into(),
+                            monogram: "=".into(),
+                            tint: slint::Color::from_rgb_u8(132, 199, 181),
+                            ..Default::default()
+                        };
+                    }
                     ResultTarget::Clipboard => {
                         return AppRow {
                             name: "剪贴板记录".into(),
@@ -227,6 +244,7 @@ impl Controller {
             })
             .collect::<Vec<_>>();
         *self.matches.borrow_mut() = matches;
+        *self.calculation.borrow_mut() = calculation;
         self.rows.set_vec(rows);
         ui.set_selected_index(0);
     }
@@ -342,6 +360,17 @@ impl Controller {
             return;
         };
         let index = match selected {
+            ResultTarget::Calculation => {
+                if let Some(result) = self.calculation.borrow().clone() {
+                    match self.clipboard.borrow().copy(clipboard::Entry::Text(result)) {
+                        Ok(()) => {
+                            let _ = ui.hide();
+                        }
+                        Err(error) => ui.set_error_message(error.into()),
+                    }
+                }
+                return;
+            }
             ResultTarget::Files => {
                 self.files.enter();
                 return;
@@ -1029,5 +1058,66 @@ mod tests {
         controller.update_results("code");
         assert_eq!(controller.rows.row_data(0).unwrap().name, "Code");
         assert_eq!(controller.rows.row_data(1).unwrap().name, "Code Studio");
+    }
+
+    #[test]
+    fn calculation_is_first_and_activation_copies_only_the_current_result() {
+        i_slint_backend_testing::init_no_event_loop();
+        let dir = file_search::test_support::TempDir::new();
+        let ui = LauncherWindow::new().unwrap();
+        let controller = controller(&ui, &dir.0);
+        let (clipboard, copies) = clipboard::History::copy_channel();
+        *controller.clipboard.borrow_mut() = clipboard;
+        *controller.apps.borrow_mut() = vec![apps::Application {
+            name: "1+2*3".into(),
+            detail: String::new(),
+            keywords: String::new(),
+            icon_name: None,
+            target: apps::LaunchTarget::File("/unused".into()),
+        }];
+        *controller.icons.borrow_mut() = vec![slint::Image::default()];
+        controller.update_results("1+2*3");
+        assert_eq!(controller.rows.row_data(0).unwrap().name, "7");
+        assert_eq!(controller.rows.row_data(1).unwrap().name, "1+2*3");
+        assert_eq!(ui.get_selected_index(), 0);
+        controller.apply_icons(vec![(
+            0,
+            icons::IconData {
+                pixels: slint::SharedPixelBuffer::clone_from_slice(&[255, 0, 0, 255], 1, 1),
+                premultiplied: false,
+            },
+        )]);
+        assert!(!controller.rows.row_data(0).unwrap().has_icon);
+        assert!(controller.rows.row_data(1).unwrap().has_icon);
+        controller.launch(0, false);
+        assert_eq!(
+            copies.try_recv().unwrap(),
+            clipboard::Entry::Text("7".into())
+        );
+        assert!(!ui.get_launching());
+        assert!(!dir.0.join("launch-counts.json").exists());
+        controller.update_results("0.1+0.2");
+        controller.launch(0, false);
+        assert_eq!(
+            copies.try_recv().unwrap(),
+            clipboard::Entry::Text("0.3".into())
+        );
+        controller.update_results("1/0");
+        assert_eq!(controller.rows.row_count(), 0);
+        controller.launch(0, false);
+        assert!(copies.try_recv().is_err());
+        assert!(controller.calculation.borrow().is_none());
+    }
+
+    #[test]
+    fn calculation_copy_failure_is_visible_to_the_user() {
+        i_slint_backend_testing::init_no_event_loop();
+        let dir = file_search::test_support::TempDir::new();
+        let ui = LauncherWindow::new().unwrap();
+        let controller = controller(&ui, &dir.0);
+        controller.update_results("2+2");
+        controller.launch(0, false);
+        assert!(!ui.get_error_message().is_empty());
+        assert!(!ui.get_launching());
     }
 }

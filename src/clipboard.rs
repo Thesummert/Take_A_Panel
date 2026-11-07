@@ -221,6 +221,18 @@ impl History {
             .send(entry)
             .map_err(|e| e.to_string())
     }
+
+    #[cfg(test)]
+    pub fn copy_channel() -> (Self, mpsc::Receiver<Entry>) {
+        let (sender, receiver) = mpsc::channel();
+        (
+            Self {
+                sender: Some(sender),
+                ..Self::default()
+            },
+            receiver,
+        )
+    }
 }
 
 fn record(entries: &mut Vec<Entry>, entry: Entry) {
