@@ -1,4 +1,5 @@
 import { ScrollView, Palette } from "std-widgets.slint";
+export { LauncherTray } from "tray.slint";
 
 export struct AppRow {
     name: string,
@@ -119,7 +120,7 @@ export component LauncherWindow inherits Window {
                             background: quit-touch.has-hover ? #34303d : transparent;
                             Text { text: "×"; color: #9193a2; horizontal-alignment: center; vertical-alignment: center; font-size: 19px; }
                         }
-                        quit-touch := TouchArea { clicked => { root.quit(); } }
+                        quit-touch := TouchArea { clicked => { root.dismiss(); } }
                     }
                 }
             }

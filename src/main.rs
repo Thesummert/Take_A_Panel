@@ -1,12 +1,16 @@
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 
 mod apps;
+mod client;
 mod icons;
+mod options;
 mod search;
+mod server;
 mod window_focus;
 
 use anyhow::{Context, Result};
 use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState, hotkey::HotKey};
+use options::Options;
 use slint::{
     ComponentHandle, Model, ModelRc, VecModel,
     winit_030::{EventResult, WinitWindowAccessor, winit},
@@ -20,48 +24,6 @@ use std::{
 use window_focus::WindowFocus;
 
 slint::include_modules!();
-
-const DEFAULT_HOTKEY: &str = "Ctrl+Alt+Space";
-
-#[derive(Debug)]
-struct Options {
-    hotkey: String,
-    hidden: bool,
-    list: bool,
-    no_hotkey: bool,
-}
-
-impl Options {
-    fn parse() -> Result<Option<Self>> {
-        let mut options = Self {
-            hotkey: std::env::var("TAKE_A_PANEL_HOTKEY").unwrap_or_else(|_| DEFAULT_HOTKEY.into()),
-            hidden: false,
-            list: false,
-            no_hotkey: false,
-        };
-        let mut args = std::env::args().skip(1);
-        while let Some(arg) = args.next() {
-            match arg.as_str() {
-                "--hotkey" => {
-                    options.hotkey = args
-                        .next()
-                        .context("--hotkey 需要一个快捷键，例如 Ctrl+Alt+Space")?
-                }
-                "--hidden" => options.hidden = true,
-                "--list" => options.list = true,
-                "--no-hotkey" => options.no_hotkey = true,
-                "--help" | "-h" => {
-                    println!(
-                        "Take a Panel — Rust + Slint 应用启动器\n\n用法: take-a-panel [选项]\n\n  --hotkey <组合键>  设置全局快捷键（默认 Ctrl+Alt+Space）\n  --hidden          启动后隐藏，等待快捷键\n  --no-hotkey       不注册全局快捷键\n  --list            列出已发现应用，不启动界面\n  --help            显示帮助\n\n快捷键也可通过 TAKE_A_PANEL_HOTKEY 环境变量设置。\n窗口内: ↑/↓ 选择，Enter 启动，Shift+Enter 新开实例，Esc 隐藏，Ctrl+R 刷新，Ctrl+Q 退出。"
-                    );
-                    return Ok(None);
-                }
-                _ => anyhow::bail!("未知参数: {arg}；使用 --help 查看帮助"),
-            }
-        }
-        Ok(Some(options))
-    }
-}
 
 enum WorkerEvent {
     Catalog(apps::Catalog),
@@ -80,17 +42,11 @@ struct Controller {
     receiver: mpsc::Receiver<WorkerEvent>,
     timer: slint::Timer,
     hotkey_notice: String,
-    has_hotkey: bool,
     focus: Arc<WindowFocus>,
 }
 
 impl Controller {
-    fn new(
-        ui: &LauncherWindow,
-        hotkey_notice: String,
-        has_hotkey: bool,
-        focus: Arc<WindowFocus>,
-    ) -> Rc<Self> {
+    fn new(ui: &LauncherWindow, hotkey_notice: String, focus: Arc<WindowFocus>) -> Rc<Self> {
         let (sender, receiver) = mpsc::channel();
         let controller = Rc::new(Self {
             ui: ui.as_weak(),
@@ -102,7 +58,6 @@ impl Controller {
             receiver,
             timer: slint::Timer::default(),
             hotkey_notice,
-            has_hotkey,
             focus,
         });
         ui.set_results(ModelRc::from(controller.rows.clone()));
@@ -219,11 +174,7 @@ impl Controller {
         };
         ui.set_launching(true);
         ui.set_error_message("".into());
-        if self.has_hotkey {
-            let _ = ui.hide();
-        } else {
-            ui.window().set_minimized(true);
-        }
+        let _ = ui.hide();
         let sender = self.sender.clone();
         let mode = if new_instance {
             apps::LaunchMode::NewInstance
@@ -345,7 +296,7 @@ fn register_hotkey(
     focus: Arc<WindowFocus>,
 ) -> (Option<GlobalHotKeyManager>, String) {
     if options.no_hotkey {
-        return (None, "全局快捷键已禁用；Esc 最小化窗口".into());
+        return (None, "全局快捷键已禁用；可从 P 菜单或命令行唤出".into());
     }
     #[cfg(target_os = "linux")]
     if std::env::var_os("WAYLAND_DISPLAY").is_some()
@@ -353,7 +304,7 @@ fn register_hotkey(
     {
         return (
             None,
-            "Wayland 暂不支持全局快捷键；Esc 最小化窗口，可从任务栏恢复".into(),
+            "Wayland 暂不支持全局快捷键；可从 P 菜单或命令行唤出".into(),
         );
     }
     let registration = (|| -> Result<_> {
@@ -383,7 +334,7 @@ fn register_hotkey(
         Err(error) => {
             let message = format!("{error:#}");
             eprintln!("{message}");
-            (None, format!("{message}；Esc 最小化窗口"))
+            (None, format!("{message}；可从 P 菜单或命令行唤出"))
         }
     }
 }
@@ -403,13 +354,33 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
-    slint::BackendSelector::new()
+    if !options.server {
+        return client::run(&options);
+    }
+    let directory = server::runtime_directory()?;
+    let Some(server) = server::Server::claim(&directory)? else {
+        server::wait_request(&directory, server::Command::Ping, Duration::from_secs(15))?;
+        return Ok(());
+    };
+    run_server(options, server)
+}
+
+fn run_server(options: Options, mut server: server::Server) -> Result<()> {
+    let backend = slint::BackendSelector::new()
         .backend_name("winit".into())
         .renderer_name("software".into())
         .with_winit_window_attributes_hook(|attributes| {
             attributes.with_transparent(true).with_resizable(false)
-        })
-        .select()?;
+        });
+    #[cfg(target_os = "macos")]
+    let backend = {
+        use winit::platform::macos::{ActivationPolicy, EventLoopBuilderExtMacOS};
+        let mut builder =
+            winit::event_loop::EventLoop::<slint::winit_030::SlintEvent>::with_user_event();
+        builder.with_activation_policy(ActivationPolicy::Accessory);
+        backend.with_winit_event_loop_builder(builder)
+    };
+    backend.select()?;
     let ui = LauncherWindow::new()?;
     let focus = Arc::new(WindowFocus::default());
     let (hotkey_manager, hotkey_notice) = register_hotkey(&ui, &options, focus.clone());
@@ -423,7 +394,7 @@ fn main() -> Result<()> {
         .into(),
     );
     ui.set_notice(hotkey_notice.as_str().into());
-    let controller = Controller::new(&ui, hotkey_notice, has_hotkey, focus.clone());
+    let controller = Controller::new(&ui, hotkey_notice, focus.clone());
 
     let weak = Rc::downgrade(&controller);
     ui.on_query_edited(move |query| {
@@ -446,11 +417,7 @@ fn main() -> Result<()> {
     let weak = ui.as_weak();
     ui.on_dismiss(move || {
         if let Some(ui) = weak.upgrade() {
-            if has_hotkey {
-                let _ = ui.hide();
-            } else {
-                ui.window().set_minimized(true);
-            }
+            let _ = ui.hide();
         }
     });
     ui.on_quit(|| {
@@ -467,22 +434,70 @@ fn main() -> Result<()> {
     ui.window().on_winit_window_event(move |window, event| {
         if let winit::event::WindowEvent::Focused(focused) = event {
             let should_hide = window_focus.changed(*focused);
-            if has_hotkey && should_hide && window.is_visible() {
+            if should_hide && window.is_visible() {
                 let _ = window.hide();
             }
         }
         EventResult::Propagate
     });
 
-    // First run is visible for discoverability. --hidden is honored only when
-    // the shortcut registered successfully, so registration failures are visible.
-    if !options.hidden || !has_hotkey {
-        present(&ui, true, &focus);
-    }
+    let tray = LauncherTray::new()?;
+    let weak = ui.as_weak();
+    let tray_focus = focus.clone();
+    tray.on_show_panel(move || {
+        if let Some(ui) = weak.upgrade() {
+            present(&ui, true, &tray_focus);
+        }
+    });
+    let weak = ui.as_weak();
+    tray.on_refresh_apps(move || {
+        if let Some(ui) = weak.upgrade() {
+            ui.invoke_refresh();
+        }
+    });
+    let weak = ui.as_weak();
+    tray.on_quit_server(move || {
+        if let Some(ui) = weak.upgrade() {
+            ui.invoke_quit();
+        }
+    });
+    tray.show()?;
+
+    let weak = ui.as_weak();
+    server.start(move |command| {
+        let focus = focus.clone();
+        weak.upgrade_in_event_loop(move |ui| {
+            match command {
+                server::Command::Show => present(&ui, true, &focus),
+                server::Command::Hide => {
+                    let _ = ui.hide();
+                }
+                server::Command::Toggle => {
+                    if ui.window().is_visible() {
+                        let _ = ui.hide();
+                    } else {
+                        present(&ui, true, &focus);
+                    }
+                }
+                server::Command::Refresh => ui.invoke_refresh(),
+                server::Command::Quit => {
+                    // Let the listener acknowledge the request before exiting.
+                    slint::Timer::single_shot(Duration::from_millis(100), || {
+                        let _ = slint::quit_event_loop();
+                    });
+                }
+                server::Command::Ping => {}
+            }
+        })?;
+        Ok(())
+    })?;
     ui.set_scanning(false);
     controller.refresh();
     slint::run_event_loop_until_quit()?;
+    drop(tray);
     drop(hotkey_manager);
+    // Release ownership only after the tray and global shortcut are gone.
+    drop(server);
     Ok(())
 }
 
@@ -494,7 +509,7 @@ mod tests {
     fn late_icon_batches_update_the_matching_filtered_row_and_are_cached() {
         i_slint_backend_testing::init_no_event_loop();
         let ui = LauncherWindow::new().unwrap();
-        let controller = Controller::new(&ui, String::new(), false, Arc::default());
+        let controller = Controller::new(&ui, String::new(), Arc::default());
         *controller.apps.borrow_mut() = ["Alpha", "Beta"]
             .into_iter()
             .map(|name| apps::Application {

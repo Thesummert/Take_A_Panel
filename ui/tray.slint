@@ -1,0 +1,14 @@
+export component LauncherTray inherits SystemTrayIcon {
+    icon: @image-url("assets/tray-p.svg");
+    tooltip: "Take a Panel";
+    callback show-panel();
+    callback refresh-apps();
+    callback quit-server();
+    clicked => { root.show-panel(); }
+    Menu {
+        MenuItem { title: "显示面板"; activated => { root.show-panel(); } }
+        MenuItem { title: "刷新应用列表"; activated => { root.refresh-apps(); } }
+        MenuSeparator { }
+        MenuItem { title: "退出 Take a Panel"; activated => { root.quit-server(); } }
+    }
+}

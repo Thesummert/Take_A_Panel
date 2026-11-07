@@ -12,14 +12,27 @@
 cargo run --release
 ```
 
-首次运行会显示窗口，之后使用 **Ctrl + Alt + Space** 显示 / 隐藏。macOS 上 Alt 对应 Option，Ctrl 对应 Control。成功启动应用或点击窗口外会隐藏面板，进程继续运行。
+默认运行会自动启动后台 server 并显示面板；已有 server 时直接调用它，客户端随即退出。之后使用 **Ctrl + Alt + Space** 显示 / 隐藏。macOS 上 Alt 对应 Option，Ctrl 对应 Control。成功启动应用或点击窗口外会隐藏面板，server 继续运行。
+
+server 在状态栏显示 **P** 图标，菜单提供“显示面板”“刷新应用列表”“退出 Take a Panel”。macOS 点击图标展开菜单，Windows / Linux 可点击图标显示面板、右键打开菜单。macOS server 使用 Accessory 模式，不占用 Dock。
 
 ```sh
 # 自定义全局快捷键
 cargo run --release -- --hotkey "Alt+Space"
 
-# 启动后直接在后台等待快捷键
+# 只启动或复用后台 server，不显示面板；命令会立即返回
 cargo run --release -- --hidden
+
+# 在当前进程运行 server，便于服务管理器或终端直接管理
+cargo run --release -- --server
+
+# 控制已有 server
+cargo run --release -- --show
+cargo run --release -- --hide
+cargo run --release -- --toggle
+cargo run --release -- --refresh
+cargo run --release -- --status
+cargo run --release -- --quit
 
 # 仅扫描、列出应用，可用于排查应用发现问题
 cargo run --release -- --list
@@ -28,7 +41,9 @@ cargo run --release -- --list
 cargo run --release -- --no-hotkey
 ```
 
-也可以设置环境变量 `TAKE_A_PANEL_HOTKEY`，命令行 `--hotkey` 的优先级更高。快捷键已占用时会保留窗口并显示错误；可以换一个组合键后重启。当前版本应只运行一个实例。
+也可以设置环境变量 `TAKE_A_PANEL_HOTKEY`，命令行 `--hotkey` 的优先级更高。快捷键配置只在创建 server 时生效，已有 server 时复用原配置；修改配置需先 `--quit` 再启动。快捷键已占用时仍可从 P 菜单或命令行显示面板。
+
+`--server` 在已有 server 时直接返回，不会创建第二个 server。`--show`、`--toggle` 和 `--hidden` 可以自动启动 server；`--hide`、`--refresh`、`--status` 和 `--quit` 不会自动启动 server。关闭终端不会停止自动启动的后台进程，退出请使用 P 菜单、`Ctrl + Q` 或 `--quit`。
 
 | 操作 | 功能 |
 | --- | --- |
@@ -37,8 +52,9 @@ cargo run --release -- --no-hotkey
 | Enter / 单击应用 | 启动应用 |
 | Shift + Enter | 尝试新开应用实例 |
 | Esc | 隐藏面板 |
+| 右上角 × | 隐藏面板，保留后台 server |
 | Ctrl + R / 右下角刷新 | 重新扫描应用 |
-| Ctrl + Q / 右上角 × | 退出程序、释放快捷键 |
+| Ctrl + Q / P 菜单退出 | 退出 server、释放快捷键 |
 | 拖动顶部标题区域 | 移动窗口 |
 
 搜索按照名称完全匹配、前缀匹配、包含匹配、关键词匹配排序。应用扫描、图标读取与启动使用后台线程，图标分批更新并缓存在内存中，搜索时复用缓存，空闲时停止轮询。
@@ -58,7 +74,11 @@ cargo run --release -- --no-hotkey
 
 Linux 会处理用户条目优先级、`Hidden`、`NoDisplay`、`OnlyShowIn`、`NotShowIn`、`TryExec` 和本地化名称。启动交给 GLib 解析 `.desktop` 的参数、工作目录、终端及 DBus 激活，不经过 shell 拼接。
 
-Wayland、`--no-hotkey` 或快捷键注册失败时，Esc 和启动应用会最小化窗口，点击外部不会自动隐藏，可从任务栏恢复面板。`--hidden` 只有在快捷键成功注册后才生效。
+Wayland、`--no-hotkey` 或快捷键注册失败时，仍可从 P 菜单或命令行 `--show` 恢复面板。Linux 状态栏需要支持 StatusNotifierItem / AppIndicator 的桌面；GNOME 可能需要相应扩展，未显示图标时仍可使用命令行唤出。
+
+Wayland 可在桌面的自定义快捷键设置中绑定 `take-a-panel --toggle`，由桌面环境接收快捷键并调用已有 server。
+
+server 通过当前用户的文件锁保证单实例，使用带凭据的本机回环连接传递控制命令，空闲时不轮询。异常退出后文件锁会自动释放，下次运行可重新启动。运行文件和后台日志位于 macOS 的 `~/Library/Caches/TakeAPanel/runtime`、Windows 的 `%LOCALAPPDATA%/TakeAPanel/runtime`，Linux 优先使用 `$XDG_RUNTIME_DIR/take-a-panel`，其次使用用户缓存目录。可通过 `TAKE_A_PANEL_RUNTIME_DIR` 指定独立目录；自动启动失败时查看目录下的 `server.log`。
 
 ### Linux 系统依赖
 
@@ -91,15 +111,19 @@ cargo build --locked --release
 
 ```text
 src/main.rs          窗口生命周期、全局快捷键、后台任务、交互绑定
+src/client.rs        server 检测、后台启动与命令转发
+src/server.rs        单实例文件锁、本地 IPC 与生命周期
+src/options.rs       server / 客户端命令行选项
 src/search.rs        搜索与排序
 src/icons/           各平台原生图标读取、解码与缩放
 src/apps/macos.rs    macOS 应用包发现与启动
 src/apps/windows.rs  Windows 开始菜单、Store 应用发现与启动
 src/apps/linux.rs    Linux Desktop Entry 发现与启动
 ui/launcher.slint    暗色圆角界面
+ui/tray.slint        P 状态栏图标与菜单
 ```
 
-暂未实现开机自启、托盘、拼音搜索、使用历史及安装包；应用发现覆盖上述标准注册位置，不扫描整块磁盘中的便携程序或 macOS 自定义应用目录。
+暂未实现开机自启、拼音搜索、使用历史及安装包；应用发现覆盖上述标准注册位置，不扫描整块磁盘中的便携程序或 macOS 自定义应用目录。
 
 技术参考：[Slint 窗口与 Winit 集成](https://docs.slint.dev/latest/docs/rust/slint/winit_030/)、[global-hotkey 平台支持](https://docs.rs/global-hotkey/0.8.0/global_hotkey/)、[Desktop Entry 规范](https://specifications.freedesktop.org/desktop-entry/latest-single/)、[Microsoft Get-StartApps](https://learn.microsoft.com/en-us/powershell/module/startlayout/get-startapps)。
 
