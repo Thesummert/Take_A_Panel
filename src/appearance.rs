@@ -152,7 +152,7 @@ impl BackgroundCache {
                         as u8
                 })
             });
-            for pixel in image.as_mut().chunks_exact_mut(3) {
+            for pixel in image.as_flat_samples_mut().samples.as_chunks_mut::<3>().0 {
                 pixel[0] = tables[0][pixel[0] as usize];
                 pixel[1] = tables[1][pixel[1] as usize];
                 pixel[2] = tables[2][pixel[2] as usize];
@@ -208,8 +208,10 @@ fn flatten(image: &image::RgbaImage, opacity: f32) -> image::RgbImage {
     let mut output = image::RgbImage::new(image.width(), image.height());
     for (pixel, target) in image
         .as_raw()
-        .chunks_exact(4)
-        .zip(output.as_mut().chunks_exact_mut(3))
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .zip(output.as_flat_samples_mut().samples.as_chunks_mut::<3>().0)
     {
         if pixel[3] == 255 && opacity == 1.0 {
             target.copy_from_slice(&pixel[..3]);

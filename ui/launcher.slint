@@ -1,4 +1,4 @@
-import { ListView, Palette } from "std-widgets.slint";
+import { Button, ListView, Palette } from "std-widgets.slint";
 import { SettingsPanel } from "settings.slint";
 export { LauncherTray } from "tray.slint";
 
@@ -61,6 +61,18 @@ export component LauncherWindow inherits Window {
     callback set-autostart(bool);
     callback refresh-autostart();
     callback open-autostart-system-settings();
+    in-out property <bool> file-search-mode;
+    in property <bool> file-indexing;
+    in property <bool> file-querying;
+    in property <bool> file-settings-busy;
+    in property <bool> file-settings-failed;
+    in property <int> file-count;
+    in property <int> file-match-count;
+    in property <string> file-index-status;
+    in property <string> file-settings-message;
+    in-out property <string> file-roots-draft;
+    callback save-file-roots(string);
+    callback rebuild-file-index();
     in property <[AppRow]> results;
     in property <int> total-count;
     in property <bool> scanning: true;
@@ -81,6 +93,7 @@ export component LauncherWindow inherits Window {
     callback launch-selected(int, bool);
     callback dismiss();
     callback refresh();
+    callback refresh-apps();
     callback quit();
     callback save-shortcut(string);
     callback capture-shortcut(string, bool, bool, bool, bool);
@@ -106,6 +119,21 @@ export component LauncherWindow inherits Window {
         search.focus();
     }
 
+    public function open-file-search-settings() {
+        root.open-settings();
+        settings-panel.page = 3;
+        settings-panel.focus-editor();
+    }
+
+    public function leave-file-search() {
+        root.file-search-mode = false;
+        root.query = "";
+        root.selected-index = 0;
+        results-view.content-y = 0px;
+        root.query-edited("");
+        search.focus();
+    }
+
     public function focus-search() {
         if (root.settings-open) { settings-panel.focus-editor(); }
         else { search.focus(); }
@@ -113,6 +141,7 @@ export component LauncherWindow inherits Window {
 
     public function reset-search() {
         root.settings-open = false;
+        root.file-search-mode = false;
         root.query = "";
         root.selected-index = 0;
         results-view.content-y = 0px;
@@ -160,7 +189,7 @@ export component LauncherWindow inherits Window {
                             background: #a89bff;
                         }
                     }
-                    Text { text: "TAKE A PANEL"; color: #b9b7c8; font-size: 11px; font-weight: 700; vertical-alignment: center; }
+                    Text { text: root.file-search-mode ? "文件搜索 · Esc 返回" : "TAKE A PANEL"; color: #b9b7c8; font-size: 11px; font-weight: 700; vertical-alignment: center; }
                     Rectangle { horizontal-stretch: 1; }
                     Text { text: root.hotkey-label; color: #747785; font-size: 11px; vertical-alignment: center; }
                     Rectangle {
@@ -212,7 +241,11 @@ export component LauncherWindow inherits Window {
                     FocusScope {
                         horizontal-stretch: 1;
                         capture-key-pressed(event) => {
-                            if (event.text == Key.Escape) { root.dismiss(); return accept; }
+                            if (event.text == Key.Escape) {
+                                if (root.file-search-mode) { root.leave-file-search(); }
+                                else { root.dismiss(); }
+                                return accept;
+                            }
                             if (event.text == Key.Return && event.modifiers.shift) {
                                 root.launch-selected(root.selected-index, true);
                                 return accept;
@@ -237,7 +270,7 @@ export component LauncherWindow inherits Window {
                         }
                         if (root.query == ""): Text {
                             x: 0px; y: 0px; width: parent.width; height: parent.height;
-                            text: "搜索应用，随即出发";
+                            text: root.file-search-mode ? "搜索文件名或路径" : "搜索应用，输入 ss 搜索文件";
                             color: #717482;
                             font-size: 23px;
                             vertical-alignment: center;
@@ -270,12 +303,19 @@ export component LauncherWindow inherits Window {
                 HorizontalLayout {
                     padding-left: 22px; padding-right: 22px;
                     Text {
-                        text: root.scanning ? "正在发现应用…" : (root.query == "" ? "全部应用" : "搜索结果");
+                        text: root.file-search-mode
+                            ? (root.file-indexing ? "正在建立文件索引…" : (root.file-querying ? "正在搜索文件…" : "文件搜索"))
+                            : (root.scanning ? "正在发现应用…" : (root.query == "" ? "全部应用" : "搜索结果"));
                         color: #858896; font-size: 11px;
                         vertical-alignment: center;
                     }
                     Rectangle { horizontal-stretch: 1; }
-                    Text { text: root.results.length + " 个"; color: #686c7b; font-size: 11px; vertical-alignment: center; }
+                    Text {
+                        text: root.file-search-mode && root.file-match-count > root.results.length
+                            ? "显示 " + root.results.length + " / " + root.file-match-count + " 项"
+                            : root.results.length + " 个";
+                        color: #686c7b; font-size: 11px; vertical-alignment: center;
+                    }
                 }
             }
 
@@ -321,7 +361,7 @@ export component LauncherWindow inherits Window {
                                 Text { text: app.detail; color: #818391; font-size: 11px; overflow: elide; }
                             }
                             if (root.selected-index == index): Text {
-                                text: root.launching ? "…" : "打开";
+                                text: root.launching ? "…" : (app.monogram == "SS" ? "进入" : "打开");
                                 color: #b2a2e8; font-size: 11px; width: 30px;
                                 vertical-alignment: center;
                             }
@@ -334,21 +374,26 @@ export component LauncherWindow inherits Window {
                 if (root.results.length == 0): VerticalLayout {
                     alignment: center; spacing: 12px;
                     Text {
-                        text: root.scanning ? "正在整理你的应用" : "没有找到匹配的应用";
+                        text: root.file-search-mode
+                            ? (root.file-indexing ? "正在建立文件索引" : (root.file-querying ? "正在搜索" : "没有找到匹配的文件"))
+                            : (root.scanning ? "正在整理你的应用" : "没有找到匹配的应用");
                         color: #c3bed6; font-size: 17px; horizontal-alignment: center;
                     }
                     Text {
-                        text: root.scanning ? "稍等片刻，即可开始" : "试试其他名称，或按 Ctrl + R 重新扫描";
+                        text: root.file-search-mode
+                            ? (root.file-indexing ? "索引在后台建立，完成后自动显示结果" : (root.file-count == 0 ? "请先在设置中添加文件索引范围" : "试试文件名或路径，Ctrl + R 重建索引"))
+                            : (root.scanning ? "稍等片刻，即可开始" : "试试其他名称，或按 Ctrl + R 重新扫描");
                         color: #747785; font-size: 12px; horizontal-alignment: center;
                     }
+                    if root.file-search-mode: Button { text: "设置索引范围"; clicked => { root.open-file-search-settings(); } }
                 }
             }
 
-            if (root.error-message != "" || root.notice != ""): Rectangle {
+            if (root.error-message != "" || (root.file-search-mode ? root.file-index-status != "" : root.notice != "")): Rectangle {
                 height: 34px;
                 Text {
                     x: 22px; width: parent.width - 44px;
-                    text: root.error-message != "" ? root.error-message : root.notice;
+                    text: root.error-message != "" ? root.error-message : (root.file-search-mode ? root.file-index-status : root.notice);
                     color: root.error-message != "" ? #ef9b9b : #b5a47a;
                     font-size: 11px; overflow: elide; vertical-alignment: center;
                 }
@@ -363,13 +408,13 @@ export component LauncherWindow inherits Window {
                     Text { text: "选择"; font-size: 11px; color: #7d8090; vertical-alignment: center; }
                     Rectangle { width: 6px; }
                     KeyCap { label: "Enter"; }
-                    Text { text: "打开应用"; font-size: 11px; color: #7d8090; vertical-alignment: center; }
+                    Text { text: root.file-search-mode ? "打开文件" : "打开应用"; font-size: 11px; color: #7d8090; vertical-alignment: center; }
                     Rectangle { width: 6px; }
-                    KeyCap { label: "Shift + Enter"; }
-                    Text { text: "新开"; font-size: 11px; color: #7d8090; vertical-alignment: center; }
+                    if !root.file-search-mode: KeyCap { label: "Shift + Enter"; }
+                    if !root.file-search-mode: Text { text: "新开"; font-size: 11px; color: #7d8090; vertical-alignment: center; }
                     Rectangle { horizontal-stretch: 1; }
                     Text {
-                        text: root.scanning ? "扫描中" : root.total-count + " 个应用已就绪";
+                        text: root.file-search-mode ? root.file-count + " 项已索引" : (root.scanning ? "扫描中" : root.total-count + " 个应用已就绪");
                         font-size: 11px; color: #747785;
                         vertical-alignment: center;
                     }
@@ -407,6 +452,14 @@ export component LauncherWindow inherits Window {
             set-autostart(enabled) => { root.set-autostart(enabled); }
             refresh-autostart => { root.refresh-autostart(); }
             open-autostart-system-settings => { root.open-autostart-system-settings(); }
+            file-roots-draft <=> root.file-roots-draft;
+            file-indexing: root.file-indexing;
+            file-settings-busy: root.file-settings-busy;
+            file-settings-failed: root.file-settings-failed;
+            file-index-status: root.file-index-status;
+            file-settings-message: root.file-settings-message;
+            save-file-roots(value) => { root.save-file-roots(value); }
+            rebuild-file-index => { root.rebuild-file-index(); }
             draft <=> root.shortcut-draft;
             current-hotkey: root.hotkey-label;
             message: root.settings-message;

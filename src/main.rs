@@ -4,6 +4,7 @@ mod appearance;
 mod apps;
 mod autostart;
 mod client;
+mod file_search;
 mod icons;
 #[cfg(any(target_os = "linux", test))]
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
@@ -51,7 +52,7 @@ enum WorkerEvent {
 struct Controller {
     ui: slint::Weak<LauncherWindow>,
     apps: RefCell<Vec<apps::Application>>,
-    matches: RefCell<Vec<usize>>,
+    matches: RefCell<Vec<Option<usize>>>,
     icons: RefCell<Vec<slint::Image>>,
     rows: Rc<VecModel<AppRow>>,
     sender: mpsc::Sender<WorkerEvent>,
@@ -60,10 +61,21 @@ struct Controller {
     hotkey_notice: RefCell<String>,
     scan_notice: RefCell<String>,
     focus: Arc<WindowFocus>,
+    files: Rc<file_search::Controller>,
 }
 
 impl Controller {
     fn new(ui: &LauncherWindow, hotkey_notice: String, focus: Arc<WindowFocus>) -> Rc<Self> {
+        let files = file_search::Controller::new(ui, focus.clone());
+        Self::with_files(ui, hotkey_notice, focus, files)
+    }
+
+    fn with_files(
+        ui: &LauncherWindow,
+        hotkey_notice: String,
+        focus: Arc<WindowFocus>,
+        files: Rc<file_search::Controller>,
+    ) -> Rc<Self> {
         let (sender, receiver) = mpsc::channel();
         let controller = Rc::new(Self {
             ui: ui.as_weak(),
@@ -77,6 +89,7 @@ impl Controller {
             hotkey_notice: RefCell::new(hotkey_notice),
             scan_notice: RefCell::new(String::new()),
             focus,
+            files,
         });
         ui.set_results(ModelRc::from(controller.rows.clone()));
         controller
@@ -102,7 +115,9 @@ impl Controller {
                 continue;
             };
             *cached = icon.into_image();
-            if let Some(row) = matches.iter().position(|&app_index| app_index == index)
+            if let Some(row) = matches
+                .iter()
+                .position(|&app_index| app_index == Some(index))
                 && let Some(mut data) = self.rows.row_data(row)
             {
                 data.icon = cached.clone();
@@ -116,12 +131,31 @@ impl Controller {
         let Some(ui) = self.ui.upgrade() else {
             return;
         };
+        if ui.get_file_search_mode() {
+            return;
+        }
+        ui.set_results(ModelRc::from(self.rows.clone()));
         let apps = self.apps.borrow();
-        let matches = search::search(&apps, query);
+        let mut matches = search::search(&apps, query)
+            .into_iter()
+            .map(Some)
+            .collect::<Vec<_>>();
+        if file_search::is_command(query) {
+            matches.insert(0, None);
+        }
         let colors = [0xb7a4f4, 0x84c7b5, 0xe4b77b, 0x88b7e4, 0xdc9fb8];
         let rows = matches
             .iter()
             .map(|&index| {
+                let Some(index) = index else {
+                    return AppRow {
+                        name: "文件搜索".into(),
+                        detail: "按 Enter 进入，搜索索引范围中的文件和文件夹".into(),
+                        monogram: "SS".into(),
+                        tint: slint::Color::from_rgb_u8(132, 199, 181),
+                        ..Default::default()
+                    };
+                };
                 let app = &apps[index];
                 let icon = self.icons.borrow().get(index).cloned().unwrap_or_default();
                 let color_index = app
@@ -195,10 +229,21 @@ impl Controller {
         if ui.get_launching() {
             return;
         }
-        let app = usize::try_from(row)
+        if ui.get_file_search_mode() {
+            self.files.open(row);
+            return;
+        }
+        let selected = usize::try_from(row)
             .ok()
-            .and_then(|row| self.matches.borrow().get(row).copied())
-            .and_then(|index| self.apps.borrow().get(index).cloned());
+            .and_then(|row| self.matches.borrow().get(row).copied());
+        let Some(selected) = selected else {
+            return;
+        };
+        let Some(index) = selected else {
+            self.files.enter();
+            return;
+        };
+        let app = self.apps.borrow().get(index).cloned();
         let Some(app) = app else {
             return;
         };
@@ -533,7 +578,12 @@ fn run_server(options: Options, mut server: server::Server) -> Result<()> {
     let weak = Rc::downgrade(&controller);
     ui.on_query_edited(move |query| {
         if let Some(c) = weak.upgrade() {
-            c.update_results(query.as_str());
+            if c.ui.upgrade().is_some_and(|ui| ui.get_file_search_mode()) {
+                c.files.query(query.as_str());
+            } else {
+                c.files.suspend();
+                c.update_results(query.as_str());
+            }
         }
     });
     let weak = Rc::downgrade(&controller);
@@ -544,6 +594,16 @@ fn run_server(options: Options, mut server: server::Server) -> Result<()> {
     });
     let weak = Rc::downgrade(&controller);
     ui.on_refresh(move || {
+        if let Some(c) = weak.upgrade() {
+            if c.ui.upgrade().is_some_and(|ui| ui.get_file_search_mode()) {
+                c.files.rebuild();
+            } else {
+                c.refresh();
+            }
+        }
+    });
+    let weak = Rc::downgrade(&controller);
+    ui.on_refresh_apps(move || {
         if let Some(c) = weak.upgrade() {
             c.refresh();
         }
@@ -613,7 +673,7 @@ fn run_server(options: Options, mut server: server::Server) -> Result<()> {
     let weak = ui.as_weak();
     tray.on_refresh_apps(move || {
         if let Some(ui) = weak.upgrade() {
-            ui.invoke_refresh();
+            ui.invoke_refresh_apps();
         }
     });
     let weak = ui.as_weak();
@@ -656,7 +716,7 @@ fn run_server(options: Options, mut server: server::Server) -> Result<()> {
                         present(&ui, true, &focus);
                     }
                 }
-                server::Command::Refresh => ui.invoke_refresh(),
+                server::Command::Refresh => ui.invoke_refresh_apps(),
                 server::Command::Quit => {
                     // Let the listener acknowledge the request before exiting.
                     slint::Timer::single_shot(Duration::from_millis(100), || {
@@ -685,11 +745,59 @@ fn run_server(options: Options, mut server: server::Server) -> Result<()> {
 mod tests {
     use super::*;
 
+    fn controller(ui: &LauncherWindow, settings: &std::path::Path) -> Rc<Controller> {
+        let focus = Arc::default();
+        let files =
+            file_search::Controller::with_settings(ui, Arc::clone(&focus), Ok(settings.to_owned()));
+        Controller::with_files(ui, String::new(), focus, files)
+    }
+
+    #[test]
+    fn ss_is_first_and_enter_switches_modes_while_app_updates_preserve_file_results() {
+        i_slint_backend_testing::init_no_event_loop();
+        let dir = file_search::test_support::TempDir::new();
+        let ui = LauncherWindow::new().unwrap();
+        let controller = controller(&ui, &dir.0);
+        *controller.apps.borrow_mut() = vec![apps::Application {
+            name: "ss".into(),
+            detail: "An application named ss".into(),
+            keywords: String::new(),
+            icon_name: None,
+            target: apps::LaunchTarget::File("/unused".into()),
+        }];
+        *controller.icons.borrow_mut() = vec![slint::Image::default()];
+        controller.update_results(" SS ");
+        assert_eq!(controller.rows.row_data(0).unwrap().name, "文件搜索");
+        assert_eq!(controller.rows.row_data(1).unwrap().name, "ss");
+        let pixel = icons::IconData {
+            pixels: slint::SharedPixelBuffer::clone_from_slice(&[255, 0, 0, 255], 1, 1),
+            premultiplied: false,
+        };
+        controller.apply_icons(vec![(0, pixel)]);
+        assert!(!controller.rows.row_data(0).unwrap().has_icon);
+        assert!(controller.rows.row_data(1).unwrap().has_icon);
+        controller.launch(0, false);
+        assert!(ui.get_file_search_mode());
+        assert_eq!(ui.get_query(), "");
+        assert!(!ui.get_launching());
+        controller.update_results("ss");
+        assert_eq!(
+            ui.get_results().row_count(),
+            0,
+            "application scans must not replace file rows"
+        );
+        ui.set_file_search_mode(false);
+        controller.files.suspend();
+        controller.update_results("");
+        assert_eq!(ui.get_results().row_data(0).unwrap().name, "ss");
+    }
+
     #[test]
     fn late_icon_batches_update_the_matching_filtered_row_and_are_cached() {
         i_slint_backend_testing::init_no_event_loop();
         let ui = LauncherWindow::new().unwrap();
-        let controller = Controller::new(&ui, String::new(), Arc::default());
+        let dir = file_search::test_support::TempDir::new();
+        let controller = controller(&ui, &dir.0);
         *controller.apps.borrow_mut() = ["Alpha", "Beta"]
             .into_iter()
             .map(|name| apps::Application {

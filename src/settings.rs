@@ -49,13 +49,31 @@ impl Settings {
 
     pub fn save_hotkey(&self, value: &str) -> Result<()> {
         value.parse::<HotKey>().context("快捷键格式错误")?;
+        self.save_text("hotkey", value)
+            .context("无法保存快捷键设置")
+    }
+
+    pub fn load_file_search_roots(&self) -> Result<String> {
+        match std::fs::read_to_string(self.directory.join("file-search-roots")) {
+            Ok(value) => Ok(value),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
+            Err(error) => Err(error).context("无法读取文件索引范围"),
+        }
+    }
+
+    pub fn save_file_search_roots(&self, value: &str) -> Result<()> {
+        self.save_text("file-search-roots", value)
+            .context("无法保存文件索引范围")
+    }
+
+    fn save_text(&self, name: &str, value: &str) -> Result<()> {
         std::fs::create_dir_all(&self.directory).context("无法创建设置目录")?;
         let mut random = [0; 8];
         getrandom::fill(&mut random)
             .map_err(|error| anyhow::anyhow!("无法创建临时设置文件名：{error}"))?;
         let temporary = self
             .directory
-            .join(format!("hotkey.{:016x}.tmp", u64::from_ne_bytes(random)));
+            .join(format!("{name}.{:016x}.tmp", u64::from_ne_bytes(random)));
         let result = (|| -> Result<()> {
             let mut file = std::fs::OpenOptions::new()
                 .write(true)
@@ -64,13 +82,13 @@ impl Settings {
             writeln!(file, "{value}")?;
             file.sync_all()?;
             drop(file);
-            std::fs::rename(&temporary, self.directory.join("hotkey"))?;
+            std::fs::rename(&temporary, self.directory.join(name))?;
             Ok(())
         })();
         if result.is_err() {
             let _ = std::fs::remove_file(&temporary);
         }
-        result.context("无法保存快捷键设置")
+        result
     }
 }
 

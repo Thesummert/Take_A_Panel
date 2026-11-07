@@ -244,6 +244,55 @@ fn autostart_settings_require_an_explicit_click_and_do_not_record_shortcuts() {
 }
 
 #[test]
+fn file_search_escape_returns_to_apps_and_settings_do_not_capture_shortcuts() {
+    slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+        i_slint_backend_testing::TestingBackendOptions {
+            renderer_name: Some("software".into()),
+            ..Default::default()
+        },
+    )))
+    .unwrap();
+    let ui = LauncherWindow::new().unwrap();
+    shortcut_recorder::bind(&ui);
+    let dismissed = Rc::new(Cell::new(false));
+    let result = dismissed.clone();
+    ui.on_dismiss(move || result.set(true));
+    ui.show().unwrap();
+    ui.set_file_search_mode(true);
+    ui.set_query("报告".into());
+    ui.invoke_open_file_search_settings();
+    assert!(ui.get_settings_open());
+    assert!(!ui.get_shortcut_recording());
+    ui.set_file_roots_draft("~/Documents\n~/Downloads".into());
+    let snapshot = ui.window().take_snapshot().unwrap();
+    if let Some(path) = std::env::var_os("TAKE_A_PANEL_FILE_SEARCH_SNAPSHOT") {
+        let mut encoder = png::Encoder::new(
+            std::fs::File::create(path).unwrap(),
+            snapshot.width(),
+            snapshot.height(),
+        );
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+        encoder
+            .write_header()
+            .unwrap()
+            .write_image_data(snapshot.as_bytes())
+            .unwrap();
+    }
+    key(&ui, Key::Escape.into());
+    assert!(!ui.get_settings_open());
+    assert!(ui.get_file_search_mode());
+    assert_eq!(ui.get_query(), "报告");
+    key(&ui, Key::Escape.into());
+    assert!(!ui.get_file_search_mode());
+    assert_eq!(ui.get_query(), "");
+    assert!(!dismissed.get());
+    key(&ui, Key::Escape.into());
+    assert!(dismissed.get());
+    ui.hide().unwrap();
+}
+
+#[test]
 fn native_shortcut_recording_uses_physical_keys_and_waits_for_save() {
     use slint::winit_030::winit::keyboard::{KeyCode, ModifiersState as Mods};
     i_slint_backend_testing::init_no_event_loop();
