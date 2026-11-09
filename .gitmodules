@@ -1,0 +1,3 @@
+[submodule "Addones"]
+	path = Addones
+	url = git@github.com:Thesummert/Take-A-Panel-Addones.git
