@@ -10,6 +10,7 @@ export struct AppRow {
     icon: image,
     has-icon: bool,
     app-result: bool,
+    addon-result: bool,
     has-path: bool,
 }
 
@@ -100,6 +101,18 @@ export component LauncherWindow inherits Window {
     in property <int> file-match-count;
     in property <string> file-index-status;
     in property <string> file-settings-message;
+    in property <[string]> addon-list;
+    in-out property <int> addon-selected: -1;
+    in-out property <string> addon-manifest-draft;
+    in-out property <string> addon-config-draft;
+    in property <bool> addon-enabled;
+    in property <string> addon-message;
+    in property <bool> addon-failed;
+    callback addon-select(int);
+    callback addon-add(string);
+    callback addon-remove(int);
+    callback addon-set-enabled(int, bool);
+    callback addon-save-config(int, string);
     in property <int> file-backend-active: 0;
     in-out property <int> file-backend-draft: 0;
     in-out property <string> file-backend-program;
@@ -125,6 +138,9 @@ export component LauncherWindow inherits Window {
     property <int> context-index: -1;
     property <bool> context-app: false;
     property <bool> context-path: false;
+    property <bool> addon-selected-result: !root.file-search-mode && !root.clipboard-mode
+        && root.selected-index >= 0 && root.selected-index < root.results.length
+        && root.results[root.selected-index].addon-result;
     property <bool> calculation-selected: !root.file-search-mode && !root.clipboard-mode
         && root.selected-index >= 0 && root.selected-index < root.results.length
         && root.results[root.selected-index].monogram == "=";
@@ -419,7 +435,7 @@ export component LauncherWindow inherits Window {
                                 Text { text: app.detail; color: #818391; font-size: 11px; overflow: elide; }
                             }
                             if (root.selected-index == index): Text {
-                                text: root.launching ? "…" : (app.monogram == "SS" || app.monogram == "CLP" ? "进入" : (root.clipboard-mode || app.monogram == "=" ? "复制" : "打开"));
+                                text: root.launching ? "…" : (app.monogram == "SS" || app.monogram == "CLP" ? "进入" : (root.clipboard-mode || app.monogram == "=" ? "复制" : (app.addon-result ? "执行" : "打开")));
                                 color: #b2a2e8; font-size: 11px; width: 30px;
                                 vertical-alignment: center;
                             }
@@ -477,10 +493,10 @@ export component LauncherWindow inherits Window {
                     Text { text: "选择"; font-size: 11px; color: #7d8090; vertical-alignment: center; }
                     Rectangle { width: 6px; }
                     KeyCap { label: "Enter"; }
-                    Text { text: root.clipboard-mode || root.calculation-selected ? "复制" : (root.file-search-mode ? "打开" : "打开应用"); font-size: 11px; color: #7d8090; vertical-alignment: center; }
+                    Text { text: root.clipboard-mode || root.calculation-selected ? "复制" : (root.file-search-mode ? "打开" : (root.addon-selected-result ? "执行" : "打开应用")); font-size: 11px; color: #7d8090; vertical-alignment: center; }
                     Rectangle { width: 6px; }
-                    if !root.file-search-mode && !root.clipboard-mode && !root.calculation-selected: KeyCap { label: "Shift + Enter"; }
-                    if !root.file-search-mode && !root.clipboard-mode && !root.calculation-selected: Text { text: "新开"; font-size: 11px; color: #7d8090; vertical-alignment: center; }
+                    if !root.file-search-mode && !root.clipboard-mode && !root.calculation-selected && !root.addon-selected-result: KeyCap { label: "Shift + Enter"; }
+                    if !root.file-search-mode && !root.clipboard-mode && !root.calculation-selected && !root.addon-selected-result: Text { text: "新开"; font-size: 11px; color: #7d8090; vertical-alignment: center; }
                     Rectangle { horizontal-stretch: 1; }
                     Text {
                         text: root.clipboard-mode ? "最多保存 100 条记录" : root.file-search-mode ? (root.file-backend-active == 3 ? root.file-count + " 项结果" : root.file-count + " 项已索引") : (root.scanning ? "扫描中" : root.total-count + " 个应用已就绪");
@@ -514,7 +530,7 @@ export component LauncherWindow inherits Window {
                 menu := VerticalLayout {
                     padding: 6px; spacing: 2px;
                     ContextItem {
-                        label: root.clipboard-mode || root.calculation-selected ? "复制" : (root.file-search-mode || root.context-app ? "打开" : "进入");
+                        label: root.clipboard-mode || root.calculation-selected ? "复制" : (root.addon-selected-result ? "执行" : (root.file-search-mode || root.context-app ? "打开" : "进入"));
                         shortcut: "Enter";
                         activated => { root.context-open = false; root.launch-selected(root.context-index, false); }
                     }
@@ -564,6 +580,18 @@ export component LauncherWindow inherits Window {
             set-autostart(enabled) => { root.set-autostart(enabled); }
             refresh-autostart => { root.refresh-autostart(); }
             open-autostart-system-settings => { root.open-autostart-system-settings(); }
+            addon-list: root.addon-list;
+            addon-selected <=> root.addon-selected;
+            addon-manifest-draft <=> root.addon-manifest-draft;
+            addon-config-draft <=> root.addon-config-draft;
+            addon-enabled: root.addon-enabled;
+            addon-message: root.addon-message;
+            addon-failed: root.addon-failed;
+            addon-select(index) => { root.addon-select(index); }
+            addon-add(path) => { root.addon-add(path); }
+            addon-remove(index) => { root.addon-remove(index); }
+            addon-set-enabled(index, enabled) => { root.addon-set-enabled(index, enabled); }
+            addon-save-config(index, config) => { root.addon-save-config(index, config); }
             file-backend-draft <=> root.file-backend-draft;
             file-backend-program <=> root.file-backend-program;
             file-everything-available: root.file-everything-available;

@@ -58,6 +58,18 @@ export component SettingsPanel inherits Rectangle {
     callback set-autostart(bool);
     callback refresh-autostart();
     callback open-autostart-system-settings();
+    in property <[string]> addon-list;
+    in-out property <int> addon-selected: -1;
+    in-out property <string> addon-manifest-draft;
+    in-out property <string> addon-config-draft;
+    in property <bool> addon-enabled;
+    in property <string> addon-message;
+    in property <bool> addon-failed;
+    callback addon-select(int);
+    callback addon-add(string);
+    callback addon-remove(int);
+    callback addon-set-enabled(int, bool);
+    callback addon-save-config(int, string);
     in-out property <int> file-backend-draft;
     in-out property <string> file-backend-program;
     in property <bool> file-everything-available;
@@ -111,6 +123,7 @@ export component SettingsPanel inherits Rectangle {
                     SettingsNavItem { label: "开机自启"; selected: root.page == 2; activated => { root.page = 2; root.focus-editor(); root.refresh-autostart(); } }
                     SettingsNavItem { label: "窗口大小"; selected: root.page == 4; activated => { root.page = 4; root.focus-editor(); } }
                     SettingsNavItem { label: "文件搜索"; selected: root.page == 3; activated => { root.page = 3; root.focus-editor(); } }
+                    SettingsNavItem { label: "插件"; selected: root.page == 5; activated => { root.page = 5; root.focus-editor(); } }
                     Rectangle { vertical-stretch: 1; }
                     Button { text: "返回面板"; clicked => { root.close(); } }
                 }
@@ -258,6 +271,25 @@ export component SettingsPanel inherits Rectangle {
                     color: root.autostart-failed ? #ef9b9b : #84c7b5;
                     font-size: 12px; wrap: word-wrap;
                 }
+                Rectangle { vertical-stretch: 1; }
+            }
+            if root.page == 5: VerticalLayout {
+                padding: 20px; spacing: 7px;
+                Text { text: "插件"; color: #f0eef8; font-size: 21px; font-weight: 600; }
+                Text { text: "添加插件的 manifest.json 路径。插件会以当前用户权限运行。"; color: #a2a5b3; font-size: 11px; wrap: word-wrap; }
+                HorizontalLayout { spacing: 8px;
+                    LineEdit { text <=> root.addon-manifest-draft; placeholder-text: "插件清单的完整路径"; }
+                    Button { text: "添加插件"; clicked => { root.addon-add(root.addon-manifest-draft); } }
+                }
+                HorizontalLayout { spacing: 8px;
+                    ComboBox { model: root.addon-list; current-index <=> root.addon-selected; selected(value) => { root.addon-select(self.current-index); } }
+                    Button { text: root.addon-enabled ? "停用" : "启用"; enabled: root.addon-selected >= 0; clicked => { root.addon-set-enabled(root.addon-selected, !root.addon-enabled); } }
+                    Button { text: "删除"; enabled: root.addon-selected >= 0; clicked => { root.addon-remove(root.addon-selected); } }
+                }
+                Text { text: "插件配置（JSON 对象）"; color: #e7e7ef; font-size: 12px; }
+                TextEdit { height: 90px; text <=> root.addon-config-draft; enabled: root.addon-selected >= 0; }
+                Button { text: "保存插件配置"; enabled: root.addon-selected >= 0; clicked => { root.addon-save-config(root.addon-selected, root.addon-config-draft); } }
+                Text { text: root.addon-message; color: root.addon-failed ? #ef9b9b : #84c7b5; font-size: 11px; wrap: word-wrap; }
                 Rectangle { vertical-stretch: 1; }
             }
             if root.page == 3: VerticalLayout {

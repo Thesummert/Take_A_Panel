@@ -1,5 +1,6 @@
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 
+mod addons;
 mod appearance;
 mod apps;
 mod autostart;
@@ -50,6 +51,8 @@ enum WorkerEvent {
     Icons(Vec<(usize, icons::IconData)>),
     ScanFinished,
     Launched(Result<launch_history::History, String>),
+    AddonSearch(u64, Result<Option<Vec<addons::Item>>, String>),
+    AddonActivated(Result<(String, bool), String>),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -58,6 +61,7 @@ enum ResultTarget {
     App(usize),
     Files,
     Clipboard,
+    Addon(usize),
 }
 
 struct Controller {
@@ -68,6 +72,13 @@ struct Controller {
     calculation: RefCell<Option<String>>,
     clipboard: RefCell<clipboard::History>,
     clipboard_matches: RefCell<Vec<clipboard::Entry>>,
+    addons: RefCell<addons::Registry>,
+    addon_context: RefCell<Option<(addons::Addon, addons::Manifest, String)>>,
+    addon_items: RefCell<Vec<addons::Item>>,
+    addon_revision: Arc<std::sync::atomic::AtomicU64>,
+    addon_debounce: slint::Timer,
+    addon_pending: std::cell::Cell<bool>,
+    addon_settings: RefCell<Option<settings::Settings>>,
     icons: RefCell<Vec<slint::Image>>,
     rows: Rc<VecModel<AppRow>>,
     sender: mpsc::Sender<WorkerEvent>,
@@ -77,6 +88,12 @@ struct Controller {
     scan_notice: RefCell<String>,
     focus: Arc<WindowFocus>,
     files: Rc<file_search::Controller>,
+}
+
+impl Drop for Controller {
+    fn drop(&mut self) {
+        self.addon_revision.fetch_add(1, Ordering::Relaxed);
+    }
 }
 
 impl Controller {
@@ -92,6 +109,7 @@ impl Controller {
         {
             let controller = Self::with_files(ui, hotkey_notice, focus, files, history);
             *controller.clipboard.borrow_mut() = clipboard::History::start();
+            controller.bind_addons();
             controller
         }
     }
@@ -112,6 +130,13 @@ impl Controller {
             calculation: RefCell::new(None),
             clipboard: RefCell::new(clipboard::History::default()),
             clipboard_matches: RefCell::new(Vec::new()),
+            addons: RefCell::default(),
+            addon_context: RefCell::default(),
+            addon_items: RefCell::default(),
+            addon_revision: addons::revision(),
+            addon_debounce: slint::Timer::default(),
+            addon_pending: std::cell::Cell::new(false),
+            addon_settings: RefCell::default(),
             icons: RefCell::new(Vec::new()),
             rows: Rc::new(VecModel::default()),
             sender,
@@ -124,6 +149,237 @@ impl Controller {
         });
         ui.set_results(ModelRc::from(controller.rows.clone()));
         controller
+    }
+
+    fn bind_addons(self: &Rc<Self>) {
+        self.bind_addons_with(settings::directory().map(settings::Settings::new));
+    }
+
+    fn bind_addons_with(self: &Rc<Self>, settings_result: Result<settings::Settings>) {
+        let Some(ui) = self.ui.upgrade() else {
+            return;
+        };
+        match settings_result {
+            Ok(settings) => {
+                match addons::Registry::load(&settings) {
+                    Ok(registry) => *self.addons.borrow_mut() = registry,
+                    Err(error) => {
+                        ui.set_addon_failed(true);
+                        ui.set_addon_message(format!("读取插件设置失败：{error:#}").into());
+                    }
+                }
+                *self.addon_settings.borrow_mut() = Some(settings);
+            }
+            Err(error) => {
+                ui.set_addon_failed(true);
+                ui.set_addon_message(format!("{error:#}").into());
+            }
+        }
+        self.refresh_addon_settings(-1);
+        let weak = Rc::downgrade(self);
+        ui.on_addon_select(move |index| {
+            if let Some(c) = weak.upgrade() {
+                c.refresh_addon_settings(index);
+            }
+        });
+        let weak = Rc::downgrade(self);
+        ui.on_addon_add(move |path| {
+            if let Some(c) = weak.upgrade() {
+                let result = c.change_addons(|registry| {
+                    registry.add(path.as_str())?;
+                    Ok((registry.addons.len() - 1) as i32)
+                });
+                c.finish_addon_change(result, "插件已添加并启用。");
+            }
+        });
+        let weak = Rc::downgrade(self);
+        ui.on_addon_remove(move |index| {
+            if let Some(c) = weak.upgrade() {
+                let result = c.change_addons(|registry| {
+                    let index = usize::try_from(index)?;
+                    anyhow::ensure!(index < registry.addons.len(), "请选择插件");
+                    registry.addons.remove(index);
+                    Ok(-1)
+                });
+                c.finish_addon_change(result, "插件已移除。插件文件未删除。");
+            }
+        });
+        let weak = Rc::downgrade(self);
+        ui.on_addon_set_enabled(move |index, enabled| {
+            if let Some(c) = weak.upgrade() {
+                let result = c.change_addons(|registry| {
+                    let addon = registry
+                        .addons
+                        .get_mut(usize::try_from(index)?)
+                        .ok_or_else(|| anyhow::anyhow!("请选择插件"))?;
+                    if enabled {
+                        addons::Manifest::read(&addon.manifest_path)?;
+                    }
+                    addon.enabled = enabled;
+                    Ok(index)
+                });
+                c.finish_addon_change(result, "插件状态已保存。");
+            }
+        });
+        let weak = Rc::downgrade(self);
+        ui.on_addon_save_config(move |index, value| {
+            if let Some(c) = weak.upgrade() {
+                let result = c.change_addons(|registry| {
+                    anyhow::ensure!(value.len() <= 32 * 1024, "配置不能超过 32 KiB");
+                    let config: serde_json::Value = serde_json::from_str(value.as_str())
+                        .map_err(|e| anyhow::anyhow!("JSON 格式错误：{e}"))?;
+                    anyhow::ensure!(config.is_object(), "插件配置必须是 JSON 对象");
+                    let addon = registry
+                        .addons
+                        .get_mut(usize::try_from(index)?)
+                        .ok_or_else(|| anyhow::anyhow!("请选择插件"))?;
+                    addon.config = config;
+                    Ok(index)
+                });
+                c.finish_addon_change(result, "插件配置已保存。");
+            }
+        });
+    }
+
+    fn change_addons(
+        &self,
+        change: impl FnOnce(&mut addons::Registry) -> Result<i32>,
+    ) -> Result<i32> {
+        let mut registry = self.addons.borrow().clone();
+        let index = change(&mut registry)?;
+        registry.save(
+            self.addon_settings
+                .borrow()
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("无法确定插件设置目录"))?,
+        )?;
+        *self.addons.borrow_mut() = registry;
+        Ok(index)
+    }
+    fn finish_addon_change(self: &Rc<Self>, result: Result<i32>, success: &str) {
+        let Some(ui) = self.ui.upgrade() else {
+            return;
+        };
+        match result {
+            Ok(index) => {
+                self.refresh_addon_settings(index);
+                ui.set_addon_failed(false);
+                ui.set_addon_message(success.into());
+                self.search_addons(ui.get_query().as_str());
+                self.update_results(ui.get_query().as_str());
+            }
+            Err(error) => {
+                ui.set_addon_failed(true);
+                ui.set_addon_message(format!("{error:#}").into());
+            }
+        }
+    }
+    fn refresh_addon_settings(&self, index: i32) {
+        let Some(ui) = self.ui.upgrade() else {
+            return;
+        };
+        let registry = self.addons.borrow();
+        let labels: Vec<slint::SharedString> = registry
+            .addons
+            .iter()
+            .map(|addon| {
+                let text = match addons::Manifest::read(&addon.manifest_path) {
+                    Ok(manifest) => format!(
+                        "{} ({}){}",
+                        manifest.name,
+                        manifest.keyword,
+                        if addon.enabled { "" } else { " · 已停用" }
+                    ),
+                    Err(_) => format!("{} · 不可用", addon.manifest_path.display()),
+                };
+                text.into()
+            })
+            .collect();
+        ui.set_addon_list(ModelRc::new(VecModel::from(labels)));
+        let selected = usize::try_from(index)
+            .ok()
+            .and_then(|i| registry.addons.get(i));
+        ui.set_addon_selected(if selected.is_some() { index } else { -1 });
+        ui.set_addon_enabled(selected.is_some_and(|addon| addon.enabled));
+        ui.set_addon_config_draft(
+            selected
+                .map(|addon| serde_json::to_string_pretty(&addon.config).unwrap_or_default())
+                .unwrap_or_default()
+                .into(),
+        );
+    }
+    fn search_addons(self: &Rc<Self>, query: &str) {
+        let Some(ui) = self.ui.upgrade() else {
+            return;
+        };
+        let generation = self.addon_revision.fetch_add(1, Ordering::Relaxed) + 1;
+        self.addon_debounce.stop();
+        self.addon_pending.set(false);
+        let context = if ui.get_file_search_mode() || ui.get_clipboard_mode() {
+            None
+        } else {
+            self.addons.borrow().matching(query)
+        };
+        let had_addon = self.addon_context.borrow().is_some();
+        *self.addon_context.borrow_mut() = context.clone();
+        if had_addon && context.is_none() {
+            ui.set_error_message("".into());
+        }
+        self.addon_items.borrow_mut().clear();
+        if let Some((addon, manifest, text)) = context {
+            self.matches.borrow_mut().clear();
+            self.rows.set_vec(Vec::new());
+            ui.set_selected_index(0);
+            ui.set_results(ModelRc::from(self.rows.clone()));
+            ui.set_error_message("".into());
+            self.addon_pending.set(true);
+            let sender = self.sender.clone();
+            let revision = self.addon_revision.clone();
+            self.addon_debounce.start(
+                slint::TimerMode::SingleShot,
+                Duration::from_millis(120),
+                move || {
+                    let addon = addon.clone();
+                    let manifest = manifest.clone();
+                    let text = text.clone();
+                    let sender = sender.clone();
+                    let revision = revision.clone();
+                    std::thread::spawn(move || {
+                        let result =
+                            addons::search(&addon, &manifest, &text, &revision, generation)
+                                .map_err(|e| format!("{e:#}"));
+                        let _ = sender.send(WorkerEvent::AddonSearch(generation, result));
+                    });
+                },
+            );
+            self.start_pump();
+        }
+    }
+    fn show_addon_results(&self, items: Vec<addons::Item>) {
+        let Some(ui) = self.ui.upgrade() else {
+            return;
+        };
+        if self.addon_context.borrow().is_none()
+            || ui.get_file_search_mode()
+            || ui.get_clipboard_mode()
+        {
+            return;
+        }
+        let rows: Vec<_> = items
+            .iter()
+            .map(|item| AppRow {
+                name: item.title.as_str().into(),
+                detail: item.detail.as_str().into(),
+                monogram: "+".into(),
+                addon_result: true,
+                tint: slint::Color::from_rgb_u8(183, 164, 244),
+                ..Default::default()
+            })
+            .collect();
+        *self.matches.borrow_mut() = (0..items.len()).map(ResultTarget::Addon).collect();
+        *self.addon_items.borrow_mut() = items;
+        self.rows.set_vec(rows);
+        ui.set_selected_index(0);
     }
 
     fn update_notice(&self) {
@@ -162,7 +418,10 @@ impl Controller {
         let Some(ui) = self.ui.upgrade() else {
             return;
         };
-        if ui.get_file_search_mode() || ui.get_clipboard_mode() {
+        if ui.get_file_search_mode()
+            || ui.get_clipboard_mode()
+            || self.addon_context.borrow().is_some()
+        {
             return;
         }
         ui.set_results(ModelRc::from(self.rows.clone()));
@@ -217,6 +476,7 @@ impl Controller {
                             ..Default::default()
                         };
                     }
+                    ResultTarget::Addon(_) => unreachable!(),
                     ResultTarget::App(index) => index,
                 };
                 let app = &apps[index];
@@ -240,6 +500,7 @@ impl Controller {
                     tint: slint::Color::from_argb_encoded(0xff000000 | colors[color_index]),
                     has_icon: icon.size().width > 0,
                     app_result: true,
+                    addon_result: false,
                     has_path: matches!(app.target, apps::LaunchTarget::File(_)),
                     icon,
                 }
@@ -427,6 +688,22 @@ impl Controller {
                 ui.invoke_focus_search();
                 return;
             }
+            ResultTarget::Addon(index) => {
+                let item = self.addon_items.borrow().get(index).cloned();
+                let context = self.addon_context.borrow().clone();
+                if let (Some(item), Some((addon, manifest, query))) = (item, context) {
+                    ui.set_launching(true);
+                    ui.set_error_message("".into());
+                    let sender = self.sender.clone();
+                    std::thread::spawn(move || {
+                        let result = addons::activate(&addon, &manifest, &query, &item.id)
+                            .map_err(|error| format!("插件执行失败：{error:#}"));
+                        let _ = sender.send(WorkerEvent::AddonActivated(result));
+                    });
+                    self.start_pump();
+                }
+                return;
+            }
             ResultTarget::App(index) => index,
         };
         let app = self.apps.borrow().get(index).cloned();
@@ -497,6 +774,33 @@ impl Controller {
                         WorkerEvent::ScanFinished => {
                             ui.set_scanning(false);
                         }
+                        WorkerEvent::AddonSearch(generation, result)
+                            if generation == controller.addon_revision.load(Ordering::Relaxed) =>
+                        {
+                            controller.addon_pending.set(false);
+                            match result {
+                                Ok(Some(items)) => controller.show_addon_results(items),
+                                Ok(None) => {}
+                                Err(error) => {
+                                    ui.set_error_message(format!("插件搜索失败：{error}").into());
+                                }
+                            }
+                        }
+                        WorkerEvent::AddonSearch(_, _) => {}
+                        WorkerEvent::AddonActivated(result) => {
+                            ui.set_launching(false);
+                            match result {
+                                Ok((message, keep_open)) => {
+                                    if !message.is_empty() {
+                                        ui.set_notice(message.into());
+                                    }
+                                    if !keep_open {
+                                        let _ = ui.hide();
+                                    }
+                                }
+                                Err(error) => ui.set_error_message(error.into()),
+                            }
+                        }
                         WorkerEvent::Launched(result) => {
                             ui.set_launching(false);
                             match result {
@@ -513,7 +817,7 @@ impl Controller {
                         }
                     }
                 }
-                if !ui.get_scanning() && !ui.get_launching() {
+                if !ui.get_scanning() && !ui.get_launching() && !controller.addon_pending.get() {
                     controller.timer.stop();
                 }
             },
@@ -845,6 +1149,7 @@ fn run_server(options: Options, mut server: server::Server) -> Result<()> {
                 c.update_clipboard_results(query.as_str());
             } else {
                 c.files.suspend();
+                c.search_addons(query.as_str());
                 c.update_results(query.as_str());
             }
         }
@@ -1025,6 +1330,55 @@ mod tests {
             files,
             launch_history::History::load(settings.to_owned()),
         )
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn addon_settings_and_search_are_connected_to_activation() {
+        if std::process::Command::new("python3")
+            .arg("--version")
+            .output()
+            .is_err()
+        {
+            return;
+        }
+        i_slint_backend_testing::init_no_event_loop();
+        let dir = file_search::test_support::TempDir::new();
+        let ui = LauncherWindow::new().unwrap();
+        ui.set_scanning(false);
+        let controller = controller(&ui, &dir.0);
+        controller.bind_addons_with(Ok(settings::Settings::new(dir.0.clone())));
+        let manifest = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("examples/addon-demo/manifest.json");
+        ui.invoke_addon_add(manifest.to_string_lossy().into_owned().into());
+        assert!(!ui.get_addon_failed());
+        assert_eq!(ui.get_addon_selected(), 0);
+        ui.invoke_addon_save_config(0, r#"{"greeting":"欢迎"}"#.into());
+        assert!(!ui.get_addon_failed());
+        ui.set_query("hello 测试".into());
+        controller.search_addons("hello 测试");
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while controller.addon_pending.get() {
+            assert!(std::time::Instant::now() < deadline);
+            i_slint_backend_testing::mock_elapsed_time(Duration::from_millis(100));
+            slint::platform::update_timers_and_animations();
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(controller.rows.row_count(), 1);
+        assert_eq!(controller.rows.row_data(0).unwrap().name, "欢迎，测试");
+        controller.launch(0, false);
+        while ui.get_launching() {
+            assert!(std::time::Instant::now() < deadline);
+            i_slint_backend_testing::mock_elapsed_time(Duration::from_millis(100));
+            slint::platform::update_timers_and_animations();
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(ui.get_notice(), "欢迎，测试");
+        ui.invoke_addon_set_enabled(0, false);
+        assert!(!ui.get_addon_enabled());
+        assert!(controller.addons.borrow().matching("hello").is_none());
+        ui.invoke_addon_remove(0);
+        assert!(controller.addons.borrow().addons.is_empty());
     }
 
     #[test]

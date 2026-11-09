@@ -94,6 +94,18 @@ impl Settings {
             .context("无法保存快捷键设置")
     }
 
+    pub fn load_addons(&self) -> Result<Option<String>> {
+        match std::fs::read_to_string(self.directory.join("addons.json")) {
+            Ok(value) => Ok(Some(value)),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(error).context("无法读取插件设置"),
+        }
+    }
+    pub fn save_addons(&self, value: &str) -> Result<()> {
+        self.save_text("addons.json", value)
+            .context("无法保存插件设置")
+    }
+
     pub fn load_file_search_backend(&self) -> Result<Option<String>> {
         match std::fs::read_to_string(self.directory.join("file-search-backend.json")) {
             Ok(value) => Ok(Some(value)),

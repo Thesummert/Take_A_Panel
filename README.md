@@ -89,6 +89,14 @@ cargo run --release -- --no-hotkey
 
 搜索结果显示应用图标：macOS 使用系统 Workspace 接口，Windows 使用 Shell 图标接口（含 Store 应用），Linux 根据 `.desktop` 的 `Icon` 字段解析绝对路径或图标主题中的 PNG / SVG 等文件。读取失败时回退到名称首字标识。
 
+## 插件
+
+插件可以提供搜索结果和命令。在 **设置 → 插件** 输入插件 `manifest.json` 的完整路径并添加；选择插件后可以启用、停用、移除，或编辑并保存 JSON 对象配置。添加或启用后，在面板输入插件的触发词（例如 `hello 张三`），按 Enter 执行结果。插件以当前用户权限运行，请只添加信任的插件。移除只删除配置记录，不删除插件文件。
+
+插件接口版本为 1：清单包含 `api_version`（整数 1）、唯一 `id`、`name`、`keyword`、`executable`，可选 `args` 和 `commands`；相对程序路径基于清单目录，参数按原样传递，不通过 shell。命令项包含 `id`、`title`、可选 `detail`。进程每次接收一个 UTF-8 JSON 请求，读取标准输入直到 EOF，向标准输出写一个 JSON 对象并退出。`search` 请求包含 `api_version`、`action`、`query`、`id: null`、`config`，响应为 `{"results":[{"id":"...","title":"...","detail":"..."}]}`；插件声明的固定命令也会参与结果展示。执行结果时发送 `activate` 请求，`id` 为所选项目的 id；响应可包含 `message` 和 `keep_open`（默认为 false）。插件进程工作目录为清单所在目录，运行超时为 3 秒；搜索结果最多 30 项，输出最多 256 KiB。配置保存在设置目录的 `addons.json`。
+
+仓库的 `examples/addon-demo` 是可运行示例：macOS / Linux 安装 Python 3 后添加该目录下的 `manifest.json`，输入 `hello`；Windows 可将清单中的 `executable` 改为 Python 可执行文件的绝对路径，`args` 改为 `["demo.py"]`。
+
 ## 文件搜索
 
 在应用搜索框输入 **`ss`**（忽略大小写），**“文件搜索”始终排在第一项**，按 Enter 或单击进入文件搜索模式。随后输入文件名、文件夹名或路径即可搜索，包括所选索引范围的文件夹本身以及空文件夹。支持中文、忽略大小写和空格分隔的多关键词；完整名称、名称前缀、名称包含、路径包含依次排序。结果标明“文件”或“文件夹”，Enter / 单击通过系统默认程序打开文件，或在系统文件管理器中打开文件夹；Esc 返回应用搜索，再按 Esc 隐藏面板。更新后可按 Ctrl + R 重建索引，将索引范围的文件夹本身纳入搜索。

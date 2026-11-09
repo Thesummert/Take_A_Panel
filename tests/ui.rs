@@ -611,3 +611,25 @@ fn keyboard_navigation_search_submit_and_empty_results() {
     assert_eq!(ui.get_query(), "");
     ui.hide().unwrap();
 }
+
+#[test]
+fn addon_settings_page_accepts_manifest_path() {
+    slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+        i_slint_backend_testing::TestingBackendOptions {
+            renderer_name: Some("software".into()),
+            ..Default::default()
+        },
+    )))
+    .unwrap();
+    let ui = LauncherWindow::new().unwrap();
+    ui.show().unwrap();
+    ui.invoke_open_settings();
+    click(&ui, 80., 360.);
+    ui.set_addon_manifest_draft("/tmp/demo/manifest.json".into());
+    let added = Rc::new(std::cell::RefCell::new(String::new()));
+    let output = added.clone();
+    ui.on_addon_add(move |value| *output.borrow_mut() = value.to_string());
+    click(&ui, 600., 150.);
+    assert_eq!(&*added.borrow(), "/tmp/demo/manifest.json");
+    ui.hide().unwrap();
+}

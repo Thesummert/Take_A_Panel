@@ -1,0 +1,11 @@
+{
+  "api_version": 1,
+  "id": "demo.greeting",
+  "name": "问候示例",
+  "keyword": "hello",
+  "executable": "/usr/bin/env",
+  "args": ["python3", "demo.py"],
+  "commands": [
+    {"id": "about", "title": "关于问候插件", "detail": "查看插件说明"}
+  ]
+}
