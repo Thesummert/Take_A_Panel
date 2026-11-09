@@ -80,6 +80,8 @@ export component SettingsPanel inherits Rectangle {
     in property <string> addon-message;
     in property <bool> addon-failed;
     callback addon-select(int);
+    in property <bool> addon-dialog-open;
+    callback addon-browse();
     callback addon-add(string);
     callback addon-remove(int);
     callback addon-set-enabled(int, bool);
@@ -298,7 +300,8 @@ export component SettingsPanel inherits Rectangle {
                 Text { text: "添加插件的 manifest.json 路径。插件会以当前用户权限运行。"; color: (AppTheme.light ? #626170 : #a2a5b3); font-size: 11px; wrap: word-wrap; }
                 HorizontalLayout { spacing: 8px;
                     LineEdit { text <=> root.addon-manifest-draft; placeholder-text: "插件清单的完整路径"; }
-                    Button { text: "添加插件"; clicked => { root.addon-add(root.addon-manifest-draft); } }
+                    Button { text: "浏览…"; enabled: !root.addon-dialog-open; clicked => { root.addon-browse(); } }
+                    Button { text: "添加插件"; enabled: !root.addon-dialog-open; clicked => { root.addon-add(root.addon-manifest-draft); } }
                 }
                 HorizontalLayout { spacing: 8px;
                     ComboBox { model: root.addon-list; current-index <=> root.addon-selected; selected(value) => { root.addon-select(self.current-index); } }

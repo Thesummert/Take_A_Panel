@@ -143,6 +143,8 @@ export component LauncherWindow inherits Window {
     in property <string> addon-message;
     in property <bool> addon-failed;
     callback addon-select(int);
+    in property <bool> addon-dialog-open;
+    callback addon-browse();
     callback addon-add(string);
     callback addon-remove(int);
     callback addon-set-enabled(int, bool);
@@ -696,6 +698,8 @@ export component LauncherWindow inherits Window {
             addon-message: root.addon-message;
             addon-failed: root.addon-failed;
             addon-select(index) => { root.addon-select(index); }
+            addon-dialog-open: root.addon-dialog-open;
+            addon-browse => { root.addon-browse(); }
             addon-add(path) => { root.addon-add(path); }
             addon-remove(index) => { root.addon-remove(index); }
             addon-set-enabled(index, enabled) => { root.addon-set-enabled(index, enabled); }

@@ -9,6 +9,10 @@ pub fn pick_background() -> Result<Option<Vec<PathBuf>>> {
     pick(Kind::Background)
 }
 
+pub fn pick_manifest() -> Result<Option<PathBuf>> {
+    Ok(pick(Kind::Manifest)?.and_then(|paths| paths.into_iter().next()))
+}
+
 pub fn pick_folder() -> Result<Option<PathBuf>> {
     Ok(pick(Kind::Folder)?.and_then(|paths| paths.into_iter().next()))
 }
@@ -17,6 +21,7 @@ pub fn pick_folder() -> Result<Option<PathBuf>> {
 enum Kind {
     Background,
     Folder,
+    Manifest,
 }
 
 impl Kind {
@@ -24,6 +29,7 @@ impl Kind {
         match self {
             Self::Background => "选择背景图片",
             Self::Folder => "添加索引文件夹",
+            Self::Manifest => "选择插件清单",
         }
     }
 }
@@ -76,6 +82,10 @@ fn portal(kind: Kind) -> Result<Option<Vec<PathBuf>>> {
         }
         Kind::Folder => {
             options.insert("directory", Value::from(true));
+        }
+        Kind::Manifest => {
+            let filters = vec![("JSON 文件", vec![(0u32, "*.json")])];
+            options.insert("filters", Value::from(filters));
         }
     }
     let handle: OwnedObjectPath = chooser.call("OpenFile", &("", kind.title(), options))?;
@@ -131,6 +141,12 @@ fn fallback_args(program: &str, kind: Kind) -> Vec<&'static str> {
             "--getopenfilename",
             ".",
             "*.png *.jpg *.jpeg *.PNG *.JPG *.JPEG|图片",
+            "--title",
+        ],
+        (true, Kind::Manifest) => vec!["--getopenfilename", ".", "*.json|JSON 文件", "--title"],
+        (false, Kind::Manifest) => vec![
+            "--file-selection",
+            "--file-filter=JSON 文件 | *.json",
             "--title",
         ],
         (false, Kind::Folder) => vec!["--file-selection", "--directory", "--title"],
