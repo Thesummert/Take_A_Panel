@@ -61,6 +61,21 @@ impl Settings {
         Self { directory }
     }
 
+    pub fn load_window_size(&self) -> Result<Option<(u32, u32)>> {
+        match std::fs::read_to_string(self.directory.join("window-size")) {
+            Ok(value) => Ok(Some(parse_window_size(&value)?)),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(error).context("无法读取窗口大小"),
+        }
+    }
+
+    pub fn save_window_size(&self, width: u32, height: u32) -> Result<()> {
+        let value = format!("{width} {height}");
+        parse_window_size(&value)?;
+        self.save_text("window-size", &value)
+            .context("无法保存窗口大小")
+    }
+
     pub fn load_hotkey(&self) -> Result<Option<String>> {
         match std::fs::read_to_string(self.directory.join("hotkey")) {
             Ok(value) => {
@@ -131,9 +146,40 @@ impl Settings {
     }
 }
 
+pub fn parse_window_size(value: &str) -> Result<(u32, u32)> {
+    let mut parts = value.split_whitespace();
+    let width = parts.next().and_then(|s| s.parse().ok());
+    let height = parts.next().and_then(|s| s.parse().ok());
+    match (width, height, parts.next()) {
+        (Some(width @ 680..=1920), Some(height @ 540..=1440), None) => Ok((width, height)),
+        _ => bail!("宽度须为 680–1920，高度须为 540–1440 的整数"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn window_size_round_trip_and_validation() {
+        let mut random = [0; 8];
+        getrandom::fill(&mut random).unwrap();
+        let path =
+            std::env::temp_dir().join(format!("panel-size-{:016x}", u64::from_ne_bytes(random)));
+        let settings = Settings::new(path.clone());
+        assert_eq!(settings.load_window_size().unwrap(), None);
+        settings.save_window_size(900, 700).unwrap();
+        assert_eq!(
+            Settings::new(path.clone()).load_window_size().unwrap(),
+            Some((900, 700))
+        );
+        assert!(settings.save_window_size(679, 700).is_err());
+        assert!(parse_window_size("900 700 extra").is_err());
+        assert_eq!(settings.load_window_size().unwrap(), Some((900, 700)));
+        std::fs::write(path.join("window-size"), "invalid").unwrap();
+        assert!(settings.load_window_size().is_err());
+        std::fs::remove_dir_all(path).unwrap();
+    }
 
     #[test]
     fn saved_hotkey_survives_reload_and_invalid_input_preserves_previous_value() {

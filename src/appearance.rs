@@ -403,6 +403,11 @@ struct Rotation {
 
 impl Rotation {
     fn warm(&self, config: AppearanceConfig, scale: f32) {
+        let Some(ui) = self.ui.upgrade() else {
+            return;
+        };
+        let width = ((ui.get_window_width() - 24) as f32 * scale).round() as u32;
+        let height = ((ui.get_window_height() - 24) as f32 * scale).round() as u32;
         let generation = self.generation.fetch_add(1, Ordering::SeqCst) + 1;
         let revision = self.generation.clone();
         let cache = self.cache.clone();
@@ -410,8 +415,6 @@ impl Rotation {
             let disk = settings::directory()
                 .ok()
                 .map(|dir| dir.join("background-cache"));
-            let width = (656.0 * scale).round() as u32;
-            let height = (516.0 * scale).round() as u32;
             for path in &config.paths {
                 if revision.load(Ordering::SeqCst) != generation {
                     break;
@@ -566,8 +569,8 @@ impl Rotation {
             ui.set_settings_message("正在处理背景图片…".into());
         }
         let scale = ui.window().scale_factor().clamp(1.0, 3.0);
-        let width = (656.0 * scale).round() as u32;
-        let height = (516.0 * scale).round() as u32;
+        let width = ((ui.get_window_width() - 24) as f32 * scale).round() as u32;
+        let height = ((ui.get_window_height() - 24) as f32 * scale).round() as u32;
         let weak_ui = ui.as_weak();
         let weak_rotation = Rc::downgrade(self);
         // Rc cannot cross threads; return through the UI event loop using a
@@ -693,6 +696,14 @@ pub fn bind(ui: &LauncherWindow) {
         rotation.apply(config.clone(), 0, false);
         rotation.warm(config, ui.window().scale_factor().clamp(1.0, 3.0));
     }
+    let on_size = rotation.clone();
+    ui.on_window_size_applied(move || {
+        let config = on_size.config.borrow().clone();
+        on_size.apply(config.clone(), on_size.index.get(), false);
+        if let Some(ui) = on_size.ui.upgrade() {
+            on_size.warm(config, ui.window().scale_factor().clamp(1.0, 3.0));
+        }
+    });
     let on_clear = rotation.clone();
     ui.on_clear_background_cache(move || on_clear.clear_cache());
     let on_present = rotation.clone();

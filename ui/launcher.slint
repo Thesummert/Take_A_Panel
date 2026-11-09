@@ -54,8 +54,8 @@ component KeyCap inherits Rectangle {
 export component LauncherWindow inherits Window {
     title: "Take a Panel";
     icon: @image-url("assets/tray-p.svg");
-    width: 680px;
-    height: 540px;
+    width: root.window-width * 1px;
+    height: root.window-height * 1px;
     no-frame: true;
     always-on-top: true;
     background: transparent;
@@ -63,6 +63,12 @@ export component LauncherWindow inherits Window {
     default-font-weight: 400;
     init => { Palette.color-scheme = ColorScheme.dark; }
 
+    in property <int> window-width: 680;
+    in property <int> window-height: 540;
+    in-out property <string> window-width-draft: "680";
+    in-out property <string> window-height-draft: "540";
+    callback save-window-size(string, string);
+    callback window-size-applied();
     in property <image> background-image;
     in property <bool> background-busy;
     in-out property <string> background-path;
@@ -532,6 +538,9 @@ export component LauncherWindow inherits Window {
             x: 1px; y: 45px;
             width: parent.width - 2px; height: parent.height - 46px;
             visible: root.settings-open;
+            window-width-draft <=> root.window-width-draft;
+            window-height-draft <=> root.window-height-draft;
+            save-window-size(width, height) => { root.save-window-size(width, height); }
             background-busy: root.background-busy;
             background-path <=> root.background-path;
             background-rotation <=> root.background-rotation;

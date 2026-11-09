@@ -521,6 +521,49 @@ impl Controller {
     }
 }
 
+fn bind_window_size(ui: &LauncherWindow) {
+    use slint::ComponentHandle;
+    let loaded =
+        settings::directory().and_then(|dir| settings::Settings::new(dir).load_window_size());
+    let (width, height) = match loaded {
+        Ok(size) => size.unwrap_or((680, 540)),
+        Err(error) => {
+            eprintln!("读取窗口大小失败：{error:#}");
+            (680, 540)
+        }
+    };
+    ui.set_window_width(width as i32);
+    ui.set_window_height(height as i32);
+    ui.set_window_width_draft(width.to_string().into());
+    ui.set_window_height_draft(height.to_string().into());
+    let weak = ui.as_weak();
+    ui.on_save_window_size(move |width, height| {
+        let Some(ui) = weak.upgrade() else {
+            return;
+        };
+        let result = settings::parse_window_size(&format!("{} {}", width.trim(), height.trim()))
+            .and_then(|(width, height)| {
+                settings::Settings::new(settings::directory()?).save_window_size(width, height)?;
+                Ok((width, height))
+            });
+        match result {
+            Ok((width, height)) => {
+                ui.set_window_width(width as i32);
+                ui.set_window_height(height as i32);
+                ui.set_window_width_draft(width.to_string().into());
+                ui.set_window_height_draft(height.to_string().into());
+                ui.invoke_window_size_applied();
+                ui.set_settings_failed(false);
+                ui.set_settings_message("窗口大小已保存。".into());
+            }
+            Err(error) => {
+                ui.set_settings_failed(true);
+                ui.set_settings_message(format!("保存窗口大小失败：{error:#}").into());
+            }
+        }
+    });
+}
+
 fn present(ui: &LauncherWindow, reset: bool, focus: &WindowFocus) {
     let was_visible = ui.window().is_visible();
     focus.begin_presentation();
@@ -684,6 +727,7 @@ fn run_server(options: Options, mut server: server::Server) -> Result<()> {
     backend.select()?;
     let ui = LauncherWindow::new()?;
     shortcut_recorder::bind(&ui);
+    bind_window_size(&ui);
     appearance::bind(&ui);
     autostart::bind(&ui);
     let focus = Arc::new(WindowFocus::default());

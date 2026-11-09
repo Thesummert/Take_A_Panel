@@ -1,4 +1,4 @@
-import { Button, ComboBox, Slider, TextEdit } from "std-widgets.slint";
+import { Button, ComboBox, Slider, TextEdit, LineEdit } from "std-widgets.slint";
 
 component ShortcutRow inherits HorizontalLayout {
     in property <string> action;
@@ -44,6 +44,9 @@ export component SettingsPanel inherits Rectangle {
     callback save-appearance(string, float, float, int);
     callback browse-background();
     callback clear-background-cache();
+    in-out property <string> window-width-draft;
+    in-out property <string> window-height-draft;
+    callback save-window-size(string, string);
     in-out property <int> page: 0;
     in property <bool> autostart-registered;
     in property <bool> autostart-available;
@@ -102,6 +105,7 @@ export component SettingsPanel inherits Rectangle {
                     SettingsNavItem { label: "快捷键设置"; selected: root.page == 0; activated => { root.page = 0; root.focus-editor(); } }
                     SettingsNavItem { label: "外观设置"; selected: root.page == 1; activated => { root.page = 1; root.focus-editor(); } }
                     SettingsNavItem { label: "开机自启"; selected: root.page == 2; activated => { root.page = 2; root.focus-editor(); root.refresh-autostart(); } }
+                    SettingsNavItem { label: "窗口大小"; selected: root.page == 4; activated => { root.page = 4; root.focus-editor(); } }
                     SettingsNavItem { label: "文件搜索"; selected: root.page == 3; activated => { root.page = 3; root.focus-editor(); } }
                     Rectangle { vertical-stretch: 1; }
                     Button { text: "返回面板"; clicked => { root.close(); } }
@@ -196,6 +200,27 @@ export component SettingsPanel inherits Rectangle {
                     spacing: 8px;
                     Button { text: root.background-busy ? "正在处理…" : "保存外观"; enabled: !root.background-busy; primary: true; clicked => { root.save-appearance(root.background-path, root.background-opacity, root.background-blur, root.background-rotation); } }
                     Button { text: "清空背景缓存"; enabled: !root.background-busy; clicked => { root.clear-background-cache(); } }
+                }
+                Text { text: root.message; color: root.failed ? #ef9b9b : #84c7b5; font-size: 11px; wrap: word-wrap; }
+                Rectangle { vertical-stretch: 1; }
+            }
+            if root.page == 4: VerticalLayout {
+                padding: 24px;
+                spacing: 16px;
+                Text { text: "窗口大小"; color: #f0eef8; font-size: 21px; font-weight: 600; }
+                Text { text: "设置面板的宽度和高度（逻辑像素）。"; color: #a2a5b3; font-size: 12px; }
+                HorizontalLayout {
+                    spacing: 10px;
+                    Text { text: "宽度"; color: #e7e7ef; vertical-alignment: center; }
+                    LineEdit { text <=> root.window-width-draft; input-type: number; }
+                    Text { text: "高度"; color: #e7e7ef; vertical-alignment: center; }
+                    LineEdit { text <=> root.window-height-draft; input-type: number; }
+                }
+                Text { text: "宽度 680–1920，高度 540–1440；默认 680 × 540。"; color: #858896; font-size: 11px; wrap: word-wrap; }
+                HorizontalLayout {
+                    spacing: 10px;
+                    Button { text: "恢复默认"; clicked => { root.window-width-draft = "680"; root.window-height-draft = "540"; } }
+                    Button { text: "保存窗口大小"; primary: true; enabled: !root.background-busy; clicked => { root.save-window-size(root.window-width-draft, root.window-height-draft); } }
                 }
                 Text { text: root.message; color: root.failed ? #ef9b9b : #84c7b5; font-size: 11px; wrap: word-wrap; }
                 Rectangle { vertical-stretch: 1; }
