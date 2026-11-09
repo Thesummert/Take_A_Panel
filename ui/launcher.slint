@@ -66,10 +66,13 @@ export component LauncherWindow inherits Window {
     in property <image> background-image;
     in property <bool> background-busy;
     in-out property <string> background-path;
+    in-out property <int> background-rotation;
     in-out property <float> background-opacity: 1;
     in-out property <float> background-blur: 0;
-    callback save-appearance(string, float, float);
+    callback save-appearance(string, float, float, int);
+    callback background-presented();
     callback browse-background();
+    callback clear-background-cache();
     in property <bool> autostart-registered;
     in property <bool> autostart-available;
     in property <bool> autostart-busy;
@@ -531,10 +534,12 @@ export component LauncherWindow inherits Window {
             visible: root.settings-open;
             background-busy: root.background-busy;
             background-path <=> root.background-path;
+            background-rotation <=> root.background-rotation;
             background-opacity <=> root.background-opacity;
             background-blur <=> root.background-blur;
-            save-appearance(path, opacity, blur) => { root.save-appearance(path, opacity, blur); }
+            save-appearance(path, opacity, blur, rotation) => { root.save-appearance(path, opacity, blur, rotation); }
             browse-background => { root.browse-background(); }
+            clear-background-cache => { root.clear-background-cache(); }
             autostart-registered: root.autostart-registered;
             autostart-available: root.autostart-available;
             autostart-busy: root.autostart-busy;

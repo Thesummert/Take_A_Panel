@@ -82,6 +82,51 @@ fn right_click_selects_result_and_menu_runs_its_action() {
 }
 
 #[test]
+fn settings_navigation_moves_selected_style_between_pages() {
+    slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+        i_slint_backend_testing::TestingBackendOptions {
+            renderer_name: Some("software".into()),
+            ..Default::default()
+        },
+    )))
+    .unwrap();
+    let ui = LauncherWindow::new().unwrap();
+    ui.show().unwrap();
+    ui.invoke_open_settings();
+    let snapshot = ui.window().take_snapshot().unwrap();
+    let pixel = |image: &slint::SharedPixelBuffer<slint::Rgba8Pixel>, x: usize, y: usize| {
+        image.as_slice()[y * image.width() as usize + x]
+    };
+    let selected = pixel(&snapshot, 35, 110);
+    let unselected = pixel(&snapshot, 35, 160);
+    assert_ne!(selected, unselected);
+
+    click(&ui, 80., 160.);
+    ui.window().dispatch_event(WindowEvent::PointerMoved {
+        position: slint::LogicalPosition::new(650., 450.),
+    });
+    let snapshot = ui.window().take_snapshot().unwrap();
+    assert_eq!(pixel(&snapshot, 35, 110), unselected);
+    assert_eq!(pixel(&snapshot, 35, 160), selected);
+    assert!(!ui.get_shortcut_recording());
+    let saved = Rc::new(std::cell::RefCell::new(None));
+    let result = saved.clone();
+    ui.on_save_appearance(move |paths, _, _, rotation| {
+        *result.borrow_mut() = Some((paths.to_string(), rotation));
+    });
+    ui.set_background_path("/tmp/a.png\n/tmp/b.png".into());
+    ui.set_background_rotation(3);
+    click(&ui, 280., 401.);
+    assert_eq!(*saved.borrow(), Some(("/tmp/a.png\n/tmp/b.png".into(), 3)));
+    let cleared = Rc::new(Cell::new(false));
+    let result = cleared.clone();
+    ui.on_clear_background_cache(move || result.set(true));
+    click(&ui, 540., 401.);
+    assert!(cleared.get());
+    ui.hide().unwrap();
+}
+
+#[test]
 fn large_lists_only_fetch_visible_rows_and_can_scroll_to_distant_results() {
     use slint::{Model, ModelTracker};
     struct LargeModel(Rc<Cell<usize>>);

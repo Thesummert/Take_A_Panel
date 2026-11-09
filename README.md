@@ -14,7 +14,9 @@ cargo run --release
 
 默认优先使用 FemtoVG / OpenGL 硬件渲染，同时编入软件渲染后端。图形初始化失败时会使用软件渲染重试一次。应用列表按可见区域创建行，大量应用不会一次生成全部界面元素；背景图片在后台按显示尺寸处理并缓存。
 
-背景使用快速高斯近似模糊，调整不透明度会复用已解码和模糊的图片。处理后的背景保存在设置目录的 `background.rgb`，下次启动直接读取；原图、显示尺寸或外观参数变化时自动更新，缓存损坏时自动重新处理。只保留一张背景缓存。
+在“设置 → 外观设置”中可以一次添加多张 PNG 或 JPEG 图片，也可以编辑路径列表（每行一张）。选择固定第一张、每次唤出时切换，或每 1、5、15、30 分钟及每小时循环切换，然后保存外观。清空路径列表可恢复默认背景；已有的单张背景设置会自动兼容。
+
+背景使用快速高斯近似模糊，调整不透明度会复用已解码和模糊的图片。应用会在后台预处理已选图片，将结果缓存在内存和设置目录的 `background-cache` 中，以加快循环切换；内存缓存上限为 128 MiB，磁盘缓存上限为 256 MiB。原图、显示尺寸或外观参数变化时自动更新，缓存损坏时自动重新处理。外观设置中的“清空背景缓存”可以删除这些缓存，保留图片和外观设置。
 
 需要强制使用软件渲染时，先退出已有 server，再设置 `SLINT_BACKEND=winit-software` 启动；`SLINT_BACKEND=winit-femtovg` 可指定 OpenGL。可运行 `cargo run --example render_check` 短暂打开测试窗口，检查实际渲染路径和截图是否正常。
 
@@ -106,7 +108,7 @@ cargo run --release -- --no-hotkey
 
 Linux 会处理用户条目优先级、`Hidden`、`NoDisplay`、`OnlyShowIn`、`NotShowIn`、`TryExec` 和本地化名称。启动交给 GLib 解析 `.desktop` 的参数、工作目录、终端及 DBus 激活，不经过 shell 拼接。
 
-Linux 背景图片的“浏览”按钮和文件索引的“添加文件夹”按钮优先通过 XDG Desktop Portal 使用当前桌面环境的选择器。Portal 不可用时，自动尝试已安装的 KDialog、Zenity 或 YAD；KDE 优先使用 KDialog。取消选择会直接返回，不再弹出其他选择器。
+Linux 背景图片的“添加图片”按钮和文件索引的“添加文件夹”按钮优先通过 XDG Desktop Portal 使用当前桌面环境的选择器。Portal 不可用时，自动尝试已安装的 KDialog、Zenity 或 YAD；KDE 优先使用 KDialog。取消选择会直接返回，不再弹出其他选择器。
 
 Wayland、`--no-hotkey` 或快捷键注册失败时，仍可从 P 菜单或命令行 `--show` 恢复面板。Linux 状态栏需要支持 StatusNotifierItem / AppIndicator 的桌面；GNOME 可能需要相应扩展，未显示图标时仍可使用命令行唤出。
 

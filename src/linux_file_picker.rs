@@ -5,12 +5,12 @@ use zbus::{
     zvariant::{OwnedObjectPath, OwnedValue, Value},
 };
 
-pub fn pick_background() -> Result<Option<PathBuf>> {
+pub fn pick_background() -> Result<Option<Vec<PathBuf>>> {
     pick(Kind::Background)
 }
 
 pub fn pick_folder() -> Result<Option<PathBuf>> {
-    pick(Kind::Folder)
+    Ok(pick(Kind::Folder)?.and_then(|paths| paths.into_iter().next()))
 }
 
 #[derive(Clone, Copy)]
@@ -28,7 +28,7 @@ impl Kind {
     }
 }
 
-fn pick(kind: Kind) -> Result<Option<PathBuf>> {
+fn pick(kind: Kind) -> Result<Option<Vec<PathBuf>>> {
     match portal(kind) {
         Ok(selection) => Ok(selection),
         Err(portal_error) => {
@@ -39,7 +39,7 @@ fn pick(kind: Kind) -> Result<Option<PathBuf>> {
     }
 }
 
-fn portal(kind: Kind) -> Result<Option<PathBuf>> {
+fn portal(kind: Kind) -> Result<Option<Vec<PathBuf>>> {
     let connection = Connection::session()?;
     let mut random = [0; 8];
     getrandom::fill(&mut random).map_err(|e| anyhow::anyhow!("{e}"))?;
@@ -67,7 +67,7 @@ fn portal(kind: Kind) -> Result<Option<PathBuf>> {
     )?;
     let mut options: HashMap<&str, Value<'_>> = HashMap::from([
         ("handle_token", Value::from(token.as_str())),
-        ("multiple", Value::from(false)),
+        ("multiple", Value::from(matches!(kind, Kind::Background))),
     ]);
     match kind {
         Kind::Background => {
@@ -95,8 +95,12 @@ fn portal(kind: Kind) -> Result<Option<PathBuf>> {
     match status {
         0 => {
             let uris = Vec::<String>::try_from(values.remove("uris").context("未返回文件路径")?)?;
-            let uri = uris.first().context("未选择文件")?;
-            Ok(Some(file_uri_path(uri)?))
+            anyhow::ensure!(!uris.is_empty(), "未选择文件");
+            Ok(Some(
+                uris.iter()
+                    .map(|uri| file_uri_path(uri))
+                    .collect::<Result<Vec<_>>>()?,
+            ))
         }
         1 => Ok(None),
         _ => bail!("系统文件选择器异常结束"),
@@ -137,10 +141,17 @@ fn fallback_args(program: &str, kind: Kind) -> Vec<&'static str> {
         ],
     };
     args.push(kind.title());
+    if matches!(kind, Kind::Background) {
+        if program == "kdialog" {
+            args.extend(["--multiple", "--separate-output"]);
+        } else {
+            args.extend(["--multiple", "--separator=\n"]);
+        }
+    }
     args
 }
 
-fn fallback(desktop: &str, kind: Kind) -> Result<Option<PathBuf>> {
+fn fallback(desktop: &str, kind: Kind) -> Result<Option<Vec<PathBuf>>> {
     let mut errors = Vec::new();
     for program in candidates(desktop) {
         match Command::new(program)
@@ -150,7 +161,13 @@ fn fallback(desktop: &str, kind: Kind) -> Result<Option<PathBuf>> {
             Ok(output) if output.status.success() => {
                 let path = String::from_utf8(output.stdout)?;
                 let path = path.trim_end_matches(['\r', '\n']);
-                return Ok((!path.is_empty()).then(|| PathBuf::from(path)));
+                return Ok((!path.is_empty()).then(|| {
+                    if matches!(kind, Kind::Background) {
+                        path.lines().map(PathBuf::from).collect()
+                    } else {
+                        vec![PathBuf::from(path)]
+                    }
+                }));
             }
             // Cancellation must not open another dialog.
             Ok(output) if output.status.code() == Some(1) => return Ok(None),

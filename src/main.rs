@@ -522,6 +522,7 @@ impl Controller {
 }
 
 fn present(ui: &LauncherWindow, reset: bool, focus: &WindowFocus) {
+    let was_visible = ui.window().is_visible();
     focus.begin_presentation();
     if reset {
         ui.invoke_reset_search();
@@ -533,6 +534,9 @@ fn present(ui: &LauncherWindow, reset: bool, focus: &WindowFocus) {
         WINDOW_RENDER_ERROR.with_borrow_mut(|pending| *pending = Some(error));
         let _ = slint::quit_event_loop();
         return;
+    }
+    if !was_visible {
+        ui.invoke_background_presented();
     }
     ui.invoke_focus_search();
     let weak = ui.as_weak();
@@ -707,18 +711,18 @@ fn run_server(options: Options, mut server: server::Server) -> Result<()> {
         std::thread::spawn(move || {
             #[cfg(target_os = "macos")]
             let result = std::process::Command::new("osascript")
-                .args(["-e", "POSIX path of (choose file with prompt \"选择背景图片\" of type {\"public.png\", \"public.jpeg\"})"]).output();
+                .args(["-e", "set selectedFiles to choose file with prompt \"选择背景图片\" of type {\"public.png\", \"public.jpeg\"} with multiple selections allowed", "-e", "set outputPaths to {}", "-e", "repeat with selectedFile in selectedFiles", "-e", "set end of outputPaths to POSIX path of selectedFile", "-e", "end repeat", "-e", "set AppleScript's text item delimiters to linefeed", "-e", "return outputPaths as text"]).output();
             #[cfg(target_os = "linux")]
-            let result = linux_file_picker::pick_background().map(|path| path.map(|p| p.to_string_lossy().into_owned()));
+            let result = linux_file_picker::pick_background().map(|paths| paths.map(|paths| paths.into_iter().map(|p| p.to_string_lossy().into_owned()).collect::<Vec<_>>()));
             #[cfg(target_os = "windows")]
             let result = std::process::Command::new("powershell")
-                .args(["-NoProfile", "-STA", "-Command", "Add-Type -AssemblyName System.Windows.Forms; $d = New-Object System.Windows.Forms.OpenFileDialog; $d.Filter = '图片|*.png;*.jpg;*.jpeg'; if ($d.ShowDialog() -eq 'OK') { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8; [Console]::Write($d.FileName) }"]).output();
+                .args(["-NoProfile", "-STA", "-Command", "Add-Type -AssemblyName System.Windows.Forms; $d = New-Object System.Windows.Forms.OpenFileDialog; $d.Filter = '图片|*.png;*.jpg;*.jpeg'; $d.Multiselect = $true; if ($d.ShowDialog() -eq 'OK') { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8; [Console]::Write(($d.FileNames -join [char]10)) }"]).output();
             #[cfg(not(target_os = "linux"))]
             let result = result.map_err(anyhow::Error::from).map(|output| {
                 if output.status.success() {
                     let path = String::from_utf8_lossy(&output.stdout);
                     let path = path.trim_end_matches(['\r', '\n']);
-                    if !path.is_empty() { return Some(path.to_owned()); }
+                    if !path.is_empty() { return Some(path.lines().map(str::to_owned).collect::<Vec<_>>()); }
                 }
                 None
             });
@@ -726,7 +730,14 @@ fn run_server(options: Options, mut server: server::Server) -> Result<()> {
                 focus.begin_presentation();
                 flag.store(false, Ordering::Relaxed);
                 match result {
-                    Ok(Some(path)) => { ui.set_background_path(path.into()); }
+                    Ok(Some(paths)) => {
+                        let existing = ui.get_background_path().to_string();
+                        let mut all = existing.lines().filter(|path| !path.trim().is_empty()).map(str::to_owned).collect::<Vec<_>>();
+                        for path in paths {
+                            if !all.contains(&path) { all.push(path); }
+                        }
+                        ui.set_background_path(all.join("\n").into());
+                    }
                     Err(error) => {
                         ui.set_settings_failed(true);
                         ui.set_settings_message(format!("无法打开文件选择器：{error}").into());
