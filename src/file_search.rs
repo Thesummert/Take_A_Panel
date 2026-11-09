@@ -7,6 +7,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+mod backend;
 mod controller;
 mod folder_picker;
 pub use controller::Controller;

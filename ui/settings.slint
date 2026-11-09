@@ -58,6 +58,10 @@ export component SettingsPanel inherits Rectangle {
     callback set-autostart(bool);
     callback refresh-autostart();
     callback open-autostart-system-settings();
+    in-out property <int> file-backend-draft;
+    in-out property <string> file-backend-program;
+    in property <bool> file-everything-available;
+    callback save-file-backend(int, string);
     in-out property <string> file-roots-draft;
     in property <bool> file-indexing;
     in property <bool> file-settings-busy;
@@ -257,22 +261,28 @@ export component SettingsPanel inherits Rectangle {
                 Rectangle { vertical-stretch: 1; }
             }
             if root.page == 3: VerticalLayout {
-                padding: 24px;
-                spacing: 12px;
+                padding: 20px;
+                spacing: 6px;
                 Text { text: "文件搜索"; color: #f0eef8; font-size: 21px; font-weight: 600; }
-                Text { text: "索引范围：每行一个目录，支持 ~/，无需引号。\n保存后递归索引文件和文件夹；留空可停用索引。\n运行期间每 30 分钟后台刷新，进入文件搜索时也会刷新。"; color: #a2a5b3; font-size: 12px; wrap: word-wrap; }
+                HorizontalLayout {
+                    spacing: 6px;
+                    ComboBox { model: root.file-everything-available ? ["内置", "ripgrep (rg)", "fd", "Everything (es)"] : ["内置", "ripgrep (rg)", "fd"]; current-index <=> root.file-backend-draft; }
+                    LineEdit { text <=> root.file-backend-program; placeholder-text: "程序路径（留空使用 PATH）"; enabled: root.file-backend-draft != 0; }
+                    Button { text: "保存后端"; enabled: !root.file-settings-busy && !root.file-folder-dialog-open; clicked => { root.save-file-backend(root.file-backend-draft, root.file-backend-program); } }
+                }
+                Text { text: root.file-backend-draft == 3 ? "Everything 使用自身索引；需运行 Everything 并安装 ES。" : "索引范围：每行一个目录，支持 ~/；留空停用索引。"; color: #a2a5b3; font-size: 11px; wrap: word-wrap; }
                 Button {
                     text: root.file-folder-dialog-open ? "正在选择文件夹…" : "添加文件夹…";
                     enabled: !root.file-settings-busy && !root.file-folder-dialog-open;
                     clicked => { root.browse-file-folder(); }
                 }
                 TextEdit {
-                    height: 112px;
+                    height: 70px;
                     text <=> root.file-roots-draft;
                     placeholder-text: "例如：~/Documents\n~/Downloads";
                     enabled: !root.file-settings-busy && !root.file-folder-dialog-open;
                 }
-                Text { text: "跳过隐藏项，遵循 .gitignore / .ignore；不跟随目录内的符号链接。"; color: #858896; font-size: 11px; wrap: word-wrap; }
+
                 HorizontalLayout {
                     spacing: 10px;
                     Button { text: "清空索引缓存"; enabled: !root.file-settings-busy && !root.file-folder-dialog-open; clicked => { root.clear-file-index(); } }
@@ -281,7 +291,7 @@ export component SettingsPanel inherits Rectangle {
                 }
                 Text { text: root.file-index-status; color: #a2a5b3; font-size: 11px; wrap: word-wrap; }
                 Text { text: root.file-settings-message; color: root.file-settings-failed ? #ef9b9b : #84c7b5; font-size: 11px; wrap: word-wrap; }
-                Text { text: "输入 ss 后回车进入，搜索文件、文件夹或路径。\nEnter 打开，Esc 返回应用搜索，Ctrl + R 重建。"; color: #858896; font-size: 11px; wrap: word-wrap; }
+
                 Rectangle { vertical-stretch: 1; }
             }
             }

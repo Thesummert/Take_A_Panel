@@ -1,3 +1,4 @@
+use super::backend::{Backend, Kind};
 use super::*;
 use crate::{AppRow, LauncherWindow, settings, window_focus::WindowFocus};
 use slint::{ComponentHandle, ModelRc, VecModel};
@@ -12,6 +13,8 @@ enum Event {
     Progress(u64, usize),
     Cached(u64, Arc<Index>),
     Indexed(u64, Arc<Index>, Option<String>),
+    IndexFailed(u64, String),
+    ExternalSearched(u64, Result<Option<Index>>),
     Searched(u64, Matches),
     Opened(Result<()>),
 }
@@ -20,11 +23,13 @@ struct Query {
     generation: u64,
     index: Arc<Index>,
     text: String,
+    backend: Backend,
 }
 
 pub struct Controller {
     ui: slint::Weak<LauncherWindow>,
     roots: RefCell<Vec<PathBuf>>,
+    backend: RefCell<Backend>,
     index: RefCell<Arc<Index>>,
     matches: RefCell<Vec<usize>>,
     rows: Rc<VecModel<AppRow>>,
@@ -89,17 +94,53 @@ impl Controller {
                 while let Ok(next) = queries.try_recv() {
                     query = next;
                 }
-                if let Some(matches) =
+                let event = if query.backend.kind == Kind::Everything {
+                    Some(Event::ExternalSearched(
+                        query.generation,
+                        backend::everything(
+                            &query.backend,
+                            &query.text,
+                            &revision,
+                            query.generation,
+                        ),
+                    ))
+                } else {
                     search_index(&query.index, &query.text, &revision, query.generation)
-                    && events
-                        .send(Event::Searched(query.generation, matches))
-                        .is_err()
+                        .map(|matches| Event::Searched(query.generation, matches))
+                };
+                if let Some(event) = event
+                    && events.send(event).is_err()
                 {
                     break;
                 }
             }
         });
         let settings_directory = directory.as_ref().ok().cloned();
+        let backend = settings_directory
+            .as_ref()
+            .map(|dir| settings::Settings::new(dir.clone()).load_file_search_backend())
+            .transpose()
+            .and_then(|text| {
+                text.flatten()
+                    .map(|text| serde_json::from_str::<Backend>(&text).map_err(Into::into))
+                    .transpose()
+            })
+            .and_then(|config| {
+                let config = config.unwrap_or_default();
+                Kind::from_index(config.kind.index())?;
+                Ok(config)
+            })
+            .unwrap_or_else(|error| {
+                ui.set_file_settings_failed(true);
+                ui.set_file_settings_message(
+                    format!("读取搜索后端失败：{error:#}；已使用内置后端").into(),
+                );
+                Backend::default()
+            });
+        ui.set_file_backend_active(backend.kind.index());
+        ui.set_file_backend_draft(backend.kind.index());
+        ui.set_file_backend_program(backend.executable.clone().into());
+        ui.set_file_everything_available(cfg!(windows));
         let roots =
             match directory.and_then(|dir| settings::Settings::new(dir).load_file_search_roots()) {
                 Ok(text) => {
@@ -129,6 +170,7 @@ impl Controller {
         let controller = Rc::new(Self {
             ui: ui.as_weak(),
             roots: RefCell::new(roots),
+            backend: RefCell::new(backend),
             index: RefCell::default(),
             matches: RefCell::default(),
             rows: Rc::new(VecModel::default()),
@@ -146,6 +188,12 @@ impl Controller {
             settings_directory,
             cache_path: cache_directory.map(|path| path.join("file-index.json")),
             cache_lock: Arc::new(Mutex::new(())),
+        });
+        let weak = Rc::downgrade(&controller);
+        ui.on_save_file_backend(move |kind, program| {
+            if let Some(controller) = weak.upgrade() {
+                controller.save_backend(kind, program.to_string());
+            }
         });
         let weak = Rc::downgrade(&controller);
         ui.on_save_file_roots(move |draft| {
@@ -216,6 +264,7 @@ impl Controller {
             generation,
             index: self.index.borrow().clone(),
             text: text.into(),
+            backend: self.backend.borrow().clone(),
         };
         let sender = self.query_sender.clone();
         self.debounce.start(
@@ -226,10 +275,51 @@ impl Controller {
                     generation: query.generation,
                     index: query.index.clone(),
                     text: query.text.clone(),
+                    backend: query.backend.clone(),
                 });
             },
         );
         self.start_pump();
+    }
+
+    fn save_backend(self: &Rc<Self>, kind: i32, executable: String) {
+        let Some(ui) = self.ui.upgrade() else {
+            return;
+        };
+        if ui.get_file_settings_busy() || ui.get_file_folder_dialog_open() {
+            return;
+        }
+        let result = (|| -> Result<Backend> {
+            let backend = Backend {
+                kind: Kind::from_index(kind)?,
+                executable: executable.trim().to_owned(),
+            };
+            anyhow::ensure!(
+                !backend.executable.contains(['\n', '\r', '\0']),
+                "程序路径无效"
+            );
+            let directory = self
+                .settings_directory
+                .clone()
+                .context("无法确定文件搜索设置目录")?;
+            settings::Settings::new(directory)
+                .save_file_search_backend(&serde_json::to_string(&backend)?)?;
+            Ok(backend)
+        })();
+        match result {
+            Ok(backend) => {
+                ui.set_file_backend_active(backend.kind.index());
+                *self.backend.borrow_mut() = backend;
+                self.clear_index();
+                ui.set_file_settings_failed(false);
+                ui.set_file_settings_message("搜索后端已保存。".into());
+                self.rebuild();
+            }
+            Err(error) => {
+                ui.set_file_settings_failed(true);
+                ui.set_file_settings_message(format!("保存搜索后端失败：{error:#}").into());
+            }
+        }
     }
 
     fn save_roots(self: &Rc<Self>, draft: String) {
@@ -257,11 +347,24 @@ impl Controller {
     }
 
     pub fn rebuild(self: &Rc<Self>) {
-        self.start_index(true, false);
+        if self.backend.borrow().kind == Kind::Everything {
+            self.index_revision.fetch_add(1, Ordering::Relaxed);
+            if let Some(ui) = self.ui.upgrade() {
+                ui.set_file_indexing(false);
+                ui.set_file_index_status("Everything：直接搜索其索引，最多显示 200 项。".into());
+                if ui.get_file_search_mode() {
+                    self.query(ui.get_query().as_str());
+                }
+            }
+        } else {
+            self.start_index(true, false);
+        }
     }
 
     fn refresh(self: &Rc<Self>) {
-        if self.ui.upgrade().is_some_and(|ui| !ui.get_file_indexing()) {
+        if self.backend.borrow().kind != Kind::Everything
+            && self.ui.upgrade().is_some_and(|ui| !ui.get_file_indexing())
+        {
             self.start_index(false, false);
         }
     }
@@ -308,6 +411,11 @@ impl Controller {
         let Some(ui) = self.ui.upgrade() else {
             return;
         };
+        if self.backend.borrow().kind == Kind::Everything {
+            ui.set_file_index_status("Everything：直接搜索其索引，最多显示 200 项。".into());
+            return;
+        }
+        let backend = self.backend.borrow().clone();
         let generation = self.index_revision.fetch_add(1, Ordering::Relaxed) + 1;
         if clear {
             self.suspend();
@@ -330,22 +438,38 @@ impl Controller {
         let cache_lock = self.cache_lock.clone();
         std::thread::spawn(move || {
             if load
+                && backend.kind == Kind::Builtin
                 && let Some(index) = cache_path
                     .as_deref()
                     .and_then(|path| load_cache(path, &roots))
             {
                 let _ = sender.send(Event::Cached(generation, Arc::new(index)));
             }
-            let index = build_index(&roots, &revision, generation, |count| {
+            let mut progress = |count| {
                 let _ = sender.send(Event::Progress(generation, count));
-            });
-            if let Some(index) = index {
-                let error = cache_path.as_deref().and_then(|path| {
-                    save_cache(path, &roots, &index, &revision, generation, &cache_lock)
-                        .err()
-                        .map(|error| format!("{error:#}"))
-                });
-                let _ = sender.send(Event::Indexed(generation, Arc::new(index), error));
+            };
+            let result = if backend.kind == Kind::Builtin {
+                Ok(build_index(&roots, &revision, generation, &mut progress))
+            } else {
+                backend::build(&backend, &roots, &revision, generation, &mut progress)
+            };
+            match result {
+                Ok(Some(index)) => {
+                    let error = if backend.kind == Kind::Builtin {
+                        cache_path.as_deref().and_then(|path| {
+                            save_cache(path, &roots, &index, &revision, generation, &cache_lock)
+                                .err()
+                                .map(|error| format!("{error:#}"))
+                        })
+                    } else {
+                        None
+                    };
+                    let _ = sender.send(Event::Indexed(generation, Arc::new(index), error));
+                }
+                Err(error) => {
+                    let _ = sender.send(Event::IndexFailed(generation, format!("{error:#}")));
+                }
+                Ok(None) => {}
             }
         });
         self.start_pump();
@@ -462,6 +586,40 @@ impl Controller {
                     *self.index.borrow_mut() = index;
                     if ui.get_file_search_mode() {
                         self.query(ui.get_query().as_str());
+                    }
+                }
+                Event::IndexFailed(generation, error)
+                    if generation == self.index_revision.load(Ordering::Relaxed) =>
+                {
+                    ui.set_file_indexing(false);
+                    ui.set_file_index_status(format!("搜索后端失败：{error}").into());
+                    ui.set_file_settings_failed(true);
+                    ui.set_file_settings_message(format!("搜索后端失败：{error}").into());
+                }
+                Event::ExternalSearched(generation, result)
+                    if generation == self.query_revision.load(Ordering::Relaxed)
+                        && ui.get_file_search_mode() =>
+                {
+                    match result {
+                        Ok(Some(index)) => {
+                            let count = index.entries.len();
+                            let matches = Matches {
+                                indices: (0..count).collect(),
+                                total: count,
+                            };
+                            *self.index.borrow_mut() = Arc::new(index);
+                            ui.set_file_count(count as i32);
+                            ui.set_file_index_status("Everything：最多显示 200 项。".into());
+                            let _ = self.sender.send(Event::Searched(generation, matches));
+                        }
+                        Ok(None) => {}
+                        Err(error) => {
+                            self.querying.set(false);
+                            ui.set_file_querying(false);
+                            ui.set_file_index_status(
+                                format!("Everything 搜索失败：{error:#}").into(),
+                            );
+                        }
                     }
                 }
                 Event::Searched(generation, matches)
@@ -586,6 +744,40 @@ mod tests {
         assert_eq!(ui.get_file_count(), 0);
         assert_eq!(ui.get_results().row_count(), 0);
         assert!(settings.load_file_search_roots().unwrap().trim().is_empty());
+    }
+
+    #[test]
+    fn backend_selection_persists_and_reports_missing_program() {
+        i_slint_backend_testing::init_no_event_loop();
+        let dir = TempDir::new();
+        let root = dir.0.join("files");
+        std::fs::create_dir(&root).unwrap();
+        let config = dir.0.join("config");
+        let ui = LauncherWindow::new().unwrap();
+        let controller = Controller::with_settings(&ui, Arc::default(), Ok(config.clone()));
+        ui.invoke_save_file_roots(root.to_str().unwrap().into());
+        wait(&controller, || {
+            !ui.get_file_settings_busy() && !ui.get_file_indexing()
+        });
+        ui.invoke_save_file_backend(
+            2,
+            dir.0
+                .join("missing-fd")
+                .to_string_lossy()
+                .into_owned()
+                .into(),
+        );
+        wait(&controller, || !ui.get_file_indexing());
+        assert!(ui.get_file_settings_failed());
+        assert!(ui.get_file_index_status().contains("搜索后端失败"));
+        let second = LauncherWindow::new().unwrap();
+        let reloaded = Controller::with_settings(&second, Arc::default(), Ok(config));
+        assert_eq!(second.get_file_backend_active(), 2);
+        wait(&reloaded, || !second.get_file_indexing());
+        ui.invoke_save_file_backend(0, "".into());
+        wait(&controller, || !ui.get_file_indexing());
+        assert_eq!(ui.get_file_backend_active(), 0);
+        assert_eq!(ui.get_file_count(), 1);
     }
 
     #[test]

@@ -94,6 +94,19 @@ impl Settings {
             .context("无法保存快捷键设置")
     }
 
+    pub fn load_file_search_backend(&self) -> Result<Option<String>> {
+        match std::fs::read_to_string(self.directory.join("file-search-backend.json")) {
+            Ok(value) => Ok(Some(value)),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(error).context("无法读取搜索后端设置"),
+        }
+    }
+
+    pub fn save_file_search_backend(&self, value: &str) -> Result<()> {
+        self.save_text("file-search-backend.json", value)
+            .context("无法保存搜索后端设置")
+    }
+
     pub fn load_file_search_roots(&self) -> Result<String> {
         match std::fs::read_to_string(self.directory.join("file-search-roots")) {
             Ok(value) => Ok(value),

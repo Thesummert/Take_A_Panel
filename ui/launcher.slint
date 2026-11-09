@@ -100,6 +100,11 @@ export component LauncherWindow inherits Window {
     in property <int> file-match-count;
     in property <string> file-index-status;
     in property <string> file-settings-message;
+    in property <int> file-backend-active: 0;
+    in-out property <int> file-backend-draft: 0;
+    in-out property <string> file-backend-program;
+    in property <bool> file-everything-available;
+    callback save-file-backend(int, string);
     in-out property <string> file-roots-draft;
     callback save-file-roots(string);
     callback browse-file-folder();
@@ -445,7 +450,7 @@ export component LauncherWindow inherits Window {
                     }
                     Text {
                         text: root.clipboard-mode ? "复制文本或图片后会自动记录" : root.file-search-mode
-                            ? (root.file-indexing ? "索引在后台建立，完成后自动显示结果" : (root.file-count == 0 ? "请先在设置中添加文件索引范围" : "试试文件、文件夹名称或路径，Ctrl + R 重建索引"))
+                            ? (root.file-indexing ? "索引在后台建立，完成后自动显示结果" : (root.file-backend-active == 3 ? "试试其他搜索词，或检查 Everything 是否运行" : (root.file-count == 0 ? "请先在设置中添加文件索引范围" : "试试文件、文件夹名称或路径，Ctrl + R 重建索引")))
                             : (root.scanning ? "稍等片刻，即可开始" : "试试其他名称，或按 Ctrl + R 重新扫描");
                         color: #747785; font-size: 12px; horizontal-alignment: center;
                     }
@@ -478,7 +483,7 @@ export component LauncherWindow inherits Window {
                     if !root.file-search-mode && !root.clipboard-mode && !root.calculation-selected: Text { text: "新开"; font-size: 11px; color: #7d8090; vertical-alignment: center; }
                     Rectangle { horizontal-stretch: 1; }
                     Text {
-                        text: root.clipboard-mode ? "最多保存 100 条记录" : root.file-search-mode ? root.file-count + " 项已索引" : (root.scanning ? "扫描中" : root.total-count + " 个应用已就绪");
+                        text: root.clipboard-mode ? "最多保存 100 条记录" : root.file-search-mode ? (root.file-backend-active == 3 ? root.file-count + " 项结果" : root.file-count + " 项已索引") : (root.scanning ? "扫描中" : root.total-count + " 个应用已就绪");
                         font-size: 11px; color: #747785;
                         vertical-alignment: center;
                     }
@@ -559,6 +564,10 @@ export component LauncherWindow inherits Window {
             set-autostart(enabled) => { root.set-autostart(enabled); }
             refresh-autostart => { root.refresh-autostart(); }
             open-autostart-system-settings => { root.open-autostart-system-settings(); }
+            file-backend-draft <=> root.file-backend-draft;
+            file-backend-program <=> root.file-backend-program;
+            file-everything-available: root.file-everything-available;
+            save-file-backend(kind, program) => { root.save-file-backend(kind, program); }
             file-roots-draft <=> root.file-roots-draft;
             file-indexing: root.file-indexing;
             file-settings-busy: root.file-settings-busy;
