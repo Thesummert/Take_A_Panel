@@ -19,7 +19,7 @@ component ContextItem inherits Rectangle {
     callback activated();
     height: 34px;
     border-radius: 6px;
-    background: touch.has-hover ? #343046 : transparent;
+    background: touch.has-hover ? #100d19.with-alpha(0.45) : transparent;
     HorizontalLayout {
         padding-left: 12px; padding-right: 12px;
         Text { text: root.label; color: #e7e7ef; font-size: 12px; vertical-alignment: center; }
@@ -239,7 +239,7 @@ export component LauncherWindow inherits Window {
                         Rectangle {
                             y: (parent.height - 25px) / 2;
                             width: parent.width; height: 25px; border-radius: 6px;
-                            background: settings-touch.has-hover ? #34303d : transparent;
+                            background: settings-touch.has-hover ? #100d19.with-alpha(0.4) : transparent;
                             Image {
                                 x: (parent.width - self.width) / 2;
                                 y: (parent.height - self.height) / 2;
@@ -259,7 +259,7 @@ export component LauncherWindow inherits Window {
                         Rectangle {
                             y: (parent.height - 25px) / 2;
                             width: 25px; height: 25px; border-radius: 6px;
-                            background: quit-touch.has-hover ? #34303d : transparent;
+                            background: quit-touch.has-hover ? #100d19.with-alpha(0.4) : transparent;
                             Text { text: "×"; color: #9193a2; horizontal-alignment: center; vertical-alignment: center; font-size: 19px; }
                         }
                         quit-touch := TouchArea { clicked => { root.dismiss(); } }
@@ -374,7 +374,7 @@ export component LauncherWindow inherits Window {
                         width: results-view.visible-width;
                         height: 66px;
                         border-radius: 10px;
-                        background: root.selected-index == index ? #2d293e : (row-touch.has-hover ? #22242c : transparent);
+                        background: root.selected-index == index ? #100d19.with-alpha(0.5) : (row-touch.has-hover ? #100d19.with-alpha(0.3) : transparent);
                         border-width: root.selected-index == index ? 1px : 0px;
                         border-color: #49405f;
                         HorizontalLayout {
@@ -478,7 +478,7 @@ export component LauncherWindow inherits Window {
                         Rectangle {
                             y: (parent.height - 26px) / 2;
                             width: 28px; height: 26px; border-radius: 6px;
-                            background: refresh-touch.has-hover ? #30323b : transparent;
+                            background: refresh-touch.has-hover ? #100d19.with-alpha(0.4) : transparent;
                             Text { text: "↻"; color: #9893b5; font-size: 19px; horizontal-alignment: center; vertical-alignment: center; }
                         }
                         refresh-touch := TouchArea { clicked => { root.refresh(); } }

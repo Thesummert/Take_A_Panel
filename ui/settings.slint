@@ -76,7 +76,7 @@ export component SettingsPanel inherits Rectangle {
                     Rectangle {
                         height: 38px;
                         border-radius: 7px;
-                        background: root.page == 0 ? #2d293e : transparent;
+                        background: root.page == 0 ? #100d19.with-alpha(0.5) : transparent;
                         Text { text: "快捷键设置"; color: #c4b7f5; font-size: 13px; horizontal-alignment: center; vertical-alignment: center; }
                         TouchArea { clicked => { root.page = 0; root.focus-editor(); } }
                     }
