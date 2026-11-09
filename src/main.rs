@@ -79,6 +79,7 @@ struct Controller {
     addon_debounce: slint::Timer,
     addon_pending: std::cell::Cell<bool>,
     addon_settings: RefCell<Option<settings::Settings>>,
+    addon_form: RefCell<Option<(i32, addons::Manifest, Vec<String>)>>,
     icons: RefCell<Vec<slint::Image>>,
     rows: Rc<VecModel<AppRow>>,
     sender: mpsc::Sender<WorkerEvent>,
@@ -137,6 +138,7 @@ impl Controller {
             addon_debounce: slint::Timer::default(),
             addon_pending: std::cell::Cell::new(false),
             addon_settings: RefCell::default(),
+            addon_form: RefCell::default(),
             icons: RefCell::new(Vec::new()),
             rows: Rc::new(VecModel::default()),
             sender,
@@ -219,6 +221,41 @@ impl Controller {
                     Ok(index)
                 });
                 c.finish_addon_change(result, "插件状态已保存。");
+            }
+        });
+        let weak = Rc::downgrade(self);
+        ui.on_addon_field_edited(move |index, value| {
+            if let Some(c) = weak.upgrade()
+                && let Some((_, _, drafts)) = c.addon_form.borrow_mut().as_mut()
+                && let Some(draft) = usize::try_from(index).ok().and_then(|i| drafts.get_mut(i))
+            {
+                *draft = value.to_string();
+            }
+        });
+        let weak = Rc::downgrade(self);
+        ui.on_addon_save_fields(move |index| {
+            if let Some(c) = weak.upgrade() {
+                let result = (|| -> Result<i32> {
+                    let form = c.addon_form.borrow();
+                    let (selected, manifest, drafts) =
+                        form.as_ref().ok_or_else(|| anyhow::anyhow!("请选择插件"))?;
+                    anyhow::ensure!(*selected == index, "插件选择已变更，请重新选择插件");
+                    c.change_addons(|registry| {
+                        let addon = registry
+                            .addons
+                            .get_mut(usize::try_from(index)?)
+                            .ok_or_else(|| anyhow::anyhow!("请选择插件"))?;
+                        let current = addons::Manifest::read(&addon.manifest_path)?;
+                        anyhow::ensure!(
+                            serde_json::to_value(&current.settings)?
+                                == serde_json::to_value(&manifest.settings)?,
+                            "插件设置已变更，请重新选择插件"
+                        );
+                        addon.config = current.config_from_drafts(&addon.config, drafts)?;
+                        Ok(index)
+                    })
+                })();
+                c.finish_addon_change(result, "插件设置已保存。");
             }
         });
         let weak = Rc::downgrade(self);
@@ -307,6 +344,53 @@ impl Controller {
                 .unwrap_or_default()
                 .into(),
         );
+        let form = selected.and_then(|addon| {
+            addons::Manifest::read(&addon.manifest_path)
+                .ok()
+                .map(|manifest| (addon, manifest))
+        });
+        let mut rows = Vec::new();
+        let mut drafts = Vec::new();
+        if let Some((addon, manifest)) = form {
+            let config = manifest.effective_config(&addon.config);
+            for field in &manifest.settings {
+                let value = &config[&field.key];
+                let value = value
+                    .as_str()
+                    .map(str::to_owned)
+                    .unwrap_or_else(|| value.to_string());
+                let option_index = field
+                    .options
+                    .iter()
+                    .position(|v| v == &value)
+                    .map_or(-1, |i| i as i32);
+                let kind = match field.kind {
+                    addons::SettingKind::Text => 0,
+                    addons::SettingKind::Boolean => 1,
+                    addons::SettingKind::Integer | addons::SettingKind::Number => 2,
+                    addons::SettingKind::Choice => 3,
+                };
+                rows.push(AddonSettingRow {
+                    label: field.label.clone().into(),
+                    description: field.description.clone().into(),
+                    kind,
+                    value: value.clone().into(),
+                    options: ModelRc::new(VecModel::from(
+                        field
+                            .options
+                            .iter()
+                            .map(|s| s.as_str().into())
+                            .collect::<Vec<slint::SharedString>>(),
+                    )),
+                    option_index,
+                });
+                drafts.push(value);
+            }
+            *self.addon_form.borrow_mut() = Some((index, manifest, drafts));
+        } else {
+            *self.addon_form.borrow_mut() = None;
+        }
+        ui.set_addon_fields(ModelRc::new(VecModel::from(rows)));
     }
     fn search_addons(self: &Rc<Self>, query: &str) {
         let Some(ui) = self.ui.upgrade() else {
@@ -1361,6 +1445,21 @@ mod tests {
         ui.invoke_addon_add(manifest.to_string_lossy().into_owned().into());
         assert!(!ui.get_addon_failed());
         assert_eq!(ui.get_addon_selected(), 0);
+        assert_eq!(ui.get_addon_fields().row_count(), 4);
+        ui.invoke_addon_field_edited(0, "欢迎".into());
+        ui.invoke_addon_field_edited(3, "9".into());
+        ui.invoke_addon_save_fields(0);
+        assert!(ui.get_addon_failed());
+        assert_eq!(
+            controller.addons.borrow().addons[0].config,
+            serde_json::json!({})
+        );
+        ui.invoke_addon_field_edited(3, "1".into());
+        ui.invoke_addon_save_fields(0);
+        assert!(!ui.get_addon_failed());
+        let saved = addons::Registry::load(&settings::Settings::new(dir.0.clone())).unwrap();
+        assert_eq!(saved.addons[0].config["greeting"], "欢迎");
+        assert_eq!(saved.addons[0].config["uppercase"], false);
         ui.invoke_addon_save_config(0, r#"{"greeting":"欢迎"}"#.into());
         assert!(!ui.get_addon_failed());
         ui.set_query("hello 测试".into());

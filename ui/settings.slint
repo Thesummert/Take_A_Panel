@@ -1,5 +1,14 @@
 import { AppTheme } from "theme.slint";
-import { Button, ComboBox, Slider, TextEdit, LineEdit } from "std-widgets.slint";
+import { Button, ComboBox, Slider, TextEdit, LineEdit, CheckBox, ScrollView } from "std-widgets.slint";
+
+export struct AddonSettingRow {
+    label: string,
+    description: string,
+    kind: int,
+    value: string,
+    options: [string],
+    option-index: int,
+}
 
 component ShortcutRow inherits HorizontalLayout {
     in property <string> action;
@@ -64,6 +73,9 @@ export component SettingsPanel inherits Rectangle {
     in-out property <int> addon-selected: -1;
     in-out property <string> addon-manifest-draft;
     in-out property <string> addon-config-draft;
+    in property <[AddonSettingRow]> addon-fields;
+    callback addon-field-edited(int, string);
+    callback addon-save-fields(int);
     in property <bool> addon-enabled;
     in property <string> addon-message;
     in property <bool> addon-failed;
@@ -293,9 +305,42 @@ export component SettingsPanel inherits Rectangle {
                     Button { text: root.addon-enabled ? "停用" : "启用"; enabled: root.addon-selected >= 0; clicked => { root.addon-set-enabled(root.addon-selected, !root.addon-enabled); } }
                     Button { text: "删除"; enabled: root.addon-selected >= 0; clicked => { root.addon-remove(root.addon-selected); } }
                 }
-                Text { text: "插件配置（JSON 对象）"; color: (AppTheme.light ? #292735 : #e7e7ef); font-size: 12px; }
-                TextEdit { height: 90px; text <=> root.addon-config-draft; enabled: root.addon-selected >= 0; }
-                Button { text: "保存插件配置"; enabled: root.addon-selected >= 0; clicked => { root.addon-save-config(root.addon-selected, root.addon-config-draft); } }
+                if root.addon-selected >= 0 && root.addon-fields.length > 0: VerticalLayout {
+                    spacing: 5px;
+                    Text { text: "插件设置"; color: (AppTheme.light ? #292735 : #e7e7ef); font-size: 12px; }
+                    ScrollView {
+                        height: 150px;
+                        VerticalLayout {
+                            spacing: 8px;
+                            for field[index] in root.addon-fields: VerticalLayout {
+                                spacing: 3px;
+                                Text { text: field.label; color: (AppTheme.light ? #292735 : #e7e7ef); font-size: 12px; }
+                                if field.description != "": Text { text: field.description; color: (AppTheme.light ? #626170 : #a2a5b3); font-size: 11px; wrap: word-wrap; }
+                                if field.kind == 0 || field.kind == 2: LineEdit {
+                                    text: field.value;
+                                    edited(value) => { root.addon-field-edited(index, value); }
+                                }
+                                if field.kind == 1: CheckBox {
+                                    text: "启用";
+                                    checked: field.value == "true";
+                                    toggled => { root.addon-field-edited(index, self.checked ? "true" : "false"); }
+                                }
+                                if field.kind == 3: ComboBox {
+                                    model: field.options;
+                                    current-index: field.option-index;
+                                    selected(value) => { root.addon-field-edited(index, value); }
+                                }
+                            }
+                        }
+                    }
+                    Button { text: "保存插件设置"; clicked => { root.addon-save-fields(root.addon-selected); } }
+                }
+                if root.addon-selected >= 0 && root.addon-fields.length == 0: VerticalLayout {
+                    spacing: 5px;
+                    Text { text: "插件配置（JSON 对象）"; color: (AppTheme.light ? #292735 : #e7e7ef); font-size: 12px; }
+                    TextEdit { height: 90px; text <=> root.addon-config-draft; }
+                    Button { text: "保存插件配置"; clicked => { root.addon-save-config(root.addon-selected, root.addon-config-draft); } }
+                }
                 Text { text: root.addon-message; color: root.addon-failed ? (AppTheme.light ? #a72e39 : #ef9b9b) : (AppTheme.light ? #217764 : #84c7b5); font-size: 11px; wrap: word-wrap; }
                 Rectangle { vertical-stretch: 1; }
             }

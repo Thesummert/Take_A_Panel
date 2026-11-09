@@ -93,9 +93,23 @@ cargo run --release -- --no-hotkey
 
 ## 插件
 
-插件可以提供搜索结果和命令。在 **设置 → 插件** 输入插件 `manifest.json` 的完整路径并添加；选择插件后可以启用、停用、移除，或编辑并保存 JSON 对象配置。添加或启用后，在面板输入插件的触发词（例如 `hello 张三`），按 Enter 执行结果。插件以当前用户权限运行，请只添加信任的插件。移除只删除配置记录，不删除插件文件。
+插件可以提供搜索结果和命令。在 **设置 → 插件** 输入插件 `manifest.json` 的完整路径并添加；选择插件后可以启用、停用、移除，或修改并保存插件设置。支持设置表单的插件由应用直接渲染，旧插件仍可编辑 JSON 对象配置。添加或启用后，在面板输入插件的触发词（例如 `hello 张三`），按 Enter 执行结果。插件以当前用户权限运行，请只添加信任的插件。移除只删除配置记录，不删除插件文件。
 
 插件接口版本为 1：清单包含 `api_version`（整数 1）、唯一 `id`、`name`、`keyword`、`executable`，可选 `args` 和 `commands`；相对程序路径基于清单目录，参数按原样传递，不通过 shell。命令项包含 `id`、`title`、可选 `detail`。进程每次接收一个 UTF-8 JSON 请求，读取标准输入直到 EOF，向标准输出写一个 JSON 对象并退出。`search` 请求包含 `api_version`、`action`、`query`、`id: null`、`config`，响应为 `{"results":[{"id":"...","title":"...","detail":"..."}]}`；插件声明的固定命令也会参与结果展示。执行结果时发送 `activate` 请求，`id` 为所选项目的 id；响应可包含 `message` 和 `keep_open`（默认为 false）。插件进程工作目录为清单所在目录，运行超时为 3 秒；搜索结果最多 30 项，输出最多 256 KiB。配置保存在设置目录的 `addons.json`。
+
+插件可在清单中添加可选的 `settings` 数组，让应用生成设置表单；省略或留空时沿用 JSON 编辑器。每项包含唯一的 `key`（字母、数字、`-`、`_`）、显示名称 `label`、`type` 和类型匹配的 `default`，还可提供 `description`：
+
+```json
+"settings": [
+  {"key": "greeting", "type": "text", "label": "问候语", "default": "你好"},
+  {"key": "enabled", "type": "boolean", "label": "启用效果", "default": true},
+  {"key": "count", "type": "integer", "label": "次数", "default": 1, "min": 1, "max": 5},
+  {"key": "scale", "type": "number", "label": "比例", "default": 1.0, "min": 0.1, "max": 2.0},
+  {"key": "style", "type": "choice", "label": "风格", "default": "普通", "options": ["普通", "简洁"]}
+]
+```
+
+`text` 为文本，`boolean` 为开关，`integer` 为整数，`number` 为数字，`choice` 为单选字符串。数字可选 `min`、`max`（含边界）；单选项必须提供非空字符串数组 `options`，默认值必须是其中一项。设置最多 50 项，每项最多 50 个选项；文本值不超过 4096 字节。用户点击保存时校验类型和范围，校验失败不会覆盖原配置。未保存过的设置使用清单默认值，调用插件时会合并到 `config`，未声明的已有配置也会保留。设置仅用于普通配置，保存在 `addons.json` 中，插件更新清单时应保持设置键和类型兼容。
 
 仓库的 `examples/addon-demo` 是可运行示例：macOS / Linux 安装 Python 3 后添加该目录下的 `manifest.json`，输入 `hello`；Windows 可将清单中的 `executable` 改为 Python 可执行文件的绝对路径，`args` 改为 `["demo.py"]`。
 

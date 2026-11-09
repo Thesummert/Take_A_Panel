@@ -25,7 +25,112 @@ pub struct Manifest {
     pub args: Vec<String>,
     #[serde(default)]
     pub commands: Vec<Item>,
+    #[serde(default)]
+    pub settings: Vec<Setting>,
 }
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Setting {
+    pub key: String,
+    pub label: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(rename = "type")]
+    pub kind: SettingKind,
+    pub default: serde_json::Value,
+    #[serde(default)]
+    pub options: Vec<String>,
+    #[serde(default)]
+    pub min: Option<f64>,
+    #[serde(default)]
+    pub max: Option<f64>,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum SettingKind {
+    Text,
+    Boolean,
+    Integer,
+    Number,
+    Choice,
+}
+
+impl Setting {
+    fn validate(&self, value: &serde_json::Value) -> Result<()> {
+        let valid = match self.kind {
+            SettingKind::Text => value.as_str().is_some_and(|v| v.len() <= 4096),
+            SettingKind::Boolean => value.is_boolean(),
+            SettingKind::Integer => value.as_i64().is_some(),
+            SettingKind::Number => value.as_f64().is_some_and(f64::is_finite),
+            SettingKind::Choice => value
+                .as_str()
+                .is_some_and(|v| self.options.iter().any(|o| o == v)),
+        };
+        ensure!(valid, "设置“{}”的值无效", self.label);
+        if let Some(number) = value.as_f64() {
+            ensure!(
+                self.min.is_none_or(|min| number >= min)
+                    && self.max.is_none_or(|max| number <= max),
+                "设置“{}”超出允许范围",
+                self.label
+            );
+        }
+        Ok(())
+    }
+
+    pub fn parse_draft(&self, text: &str) -> Result<serde_json::Value> {
+        let value = match self.kind {
+            SettingKind::Text | SettingKind::Choice => serde_json::Value::String(text.into()),
+            SettingKind::Boolean => serde_json::Value::Bool(text.parse().context("开关值无效")?),
+            SettingKind::Integer => serde_json::Value::from(
+                text.trim()
+                    .parse::<i64>()
+                    .with_context(|| format!("设置“{}”需要整数", self.label))?,
+            ),
+            SettingKind::Number => serde_json::Value::from(
+                text.trim()
+                    .parse::<f64>()
+                    .with_context(|| format!("设置“{}”需要数字", self.label))?,
+            ),
+        };
+        self.validate(&value)?;
+        Ok(value)
+    }
+}
+
+impl Manifest {
+    pub fn effective_config(&self, config: &serde_json::Value) -> serde_json::Value {
+        let mut config = config.as_object().cloned().unwrap_or_default();
+        for setting in &self.settings {
+            config
+                .entry(setting.key.clone())
+                .or_insert_with(|| setting.default.clone());
+        }
+        serde_json::Value::Object(config)
+    }
+
+    pub fn config_from_drafts(
+        &self,
+        config: &serde_json::Value,
+        drafts: &[String],
+    ) -> Result<serde_json::Value> {
+        ensure!(
+            drafts.len() == self.settings.len(),
+            "设置项已变更，请重新选择插件"
+        );
+        let mut result = self.effective_config(config);
+        let object = result.as_object_mut().unwrap();
+        for (setting, draft) in self.settings.iter().zip(drafts) {
+            object.insert(setting.key.clone(), setting.parse_draft(draft)?);
+        }
+        ensure!(
+            serde_json::to_vec(&result)?.len() <= 32 * 1024,
+            "配置不能超过 32 KiB"
+        );
+        Ok(result)
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Item {
     pub id: String,
@@ -84,6 +189,55 @@ impl Manifest {
                 .any(|word| manifest.keyword.eq_ignore_ascii_case(word)),
             "触发词与内置命令冲突"
         );
+        ensure!(manifest.settings.len() <= 50, "插件设置项过多");
+        let mut keys = std::collections::HashSet::new();
+        for setting in &manifest.settings {
+            ensure!(
+                !setting.key.is_empty()
+                    && setting.key.len() <= 128
+                    && setting
+                        .key
+                        .chars()
+                        .all(|c| c.is_ascii_alphanumeric() || "-_".contains(c))
+                    && keys.insert(&setting.key),
+                "插件设置键无效或重复"
+            );
+            ensure!(
+                !setting.label.trim().is_empty()
+                    && setting.label.len() <= 128
+                    && setting.description.len() <= 512,
+                "插件设置说明无效"
+            );
+            ensure!(
+                setting.options.len() <= 50
+                    && setting
+                        .options
+                        .iter()
+                        .all(|o| !o.is_empty() && o.len() <= 256),
+                "插件设置选项无效"
+            );
+            ensure!(
+                setting.kind == SettingKind::Choice || setting.options.is_empty(),
+                "只有选项设置可以声明 options"
+            );
+            ensure!(
+                matches!(setting.kind, SettingKind::Integer | SettingKind::Number)
+                    || (setting.min.is_none() && setting.max.is_none()),
+                "只有数字设置可以声明范围"
+            );
+            ensure!(
+                setting.min.is_none_or(f64::is_finite)
+                    && setting.max.is_none_or(f64::is_finite)
+                    && setting
+                        .min
+                        .zip(setting.max)
+                        .is_none_or(|(min, max)| min <= max),
+                "插件设置范围无效"
+            );
+            setting
+                .validate(&setting.default)
+                .context("插件设置默认值无效")?;
+        }
         for item in &manifest.commands {
             validate_item(item)?;
         }
@@ -188,12 +342,13 @@ fn invoke(
     revision: &AtomicU64,
     generation: u64,
 ) -> Result<Option<Response>> {
+    let config = manifest.effective_config(&addon.config);
     let request = serde_json::to_vec(&Request {
         api_version: 1,
         action,
         query,
         id,
-        config: &addon.config,
+        config: &config,
     })?;
     let mut command = Command::new(&manifest.executable);
     command
@@ -339,6 +494,47 @@ mod tests {
         let invalid = dir.0.join("invalid.json");
         std::fs::write(&invalid, serde_json::to_vec(&serde_json::json!({"api_version":2,"id":"x","name":"X","keyword":"x","executable":executable})).unwrap()).unwrap();
         assert!(registry.add(invalid.to_str().unwrap()).is_err());
+    }
+
+    #[test]
+    fn setting_schema_defaults_validation_and_preserves_other_values() {
+        let dir = TempDir::new();
+        let path = dir.0.join("manifest.json");
+        let mut json = serde_json::json!({
+            "api_version": 1, "id": "form", "name": "Form", "keyword": "form",
+            "executable": std::env::current_exe().unwrap(),
+            "settings": [
+                {"key":"name", "type":"text", "label":"Name", "default":"Default"},
+                {"key":"enabled", "type":"boolean", "label":"Enabled", "default":true},
+                {"key":"count", "type":"integer", "label":"Count", "default":2, "min":1, "max":3},
+                {"key":"scale", "type":"number", "label":"Scale", "default":1.5, "min":0.5},
+                {"key":"style", "type":"choice", "label":"Style", "default":"a", "options":["a","b"]}
+            ]
+        });
+        std::fs::write(&path, serde_json::to_vec(&json).unwrap()).unwrap();
+        let manifest = Manifest::read(&path).unwrap();
+        let existing = serde_json::json!({"name":"Saved", "extra":42});
+        let effective = manifest.effective_config(&existing);
+        assert_eq!(effective["name"], "Saved");
+        assert_eq!(effective["enabled"], true);
+        let drafts = ["New", "false", "3", "0.75", "b"].map(str::to_owned);
+        let saved = manifest.config_from_drafts(&existing, &drafts).unwrap();
+        assert_eq!(
+            saved,
+            serde_json::json!({"name":"New", "enabled":false, "count":3, "scale":0.75, "style":"b", "extra":42})
+        );
+        for (index, invalid) in [(1, "yes"), (2, "4"), (2, "1.5"), (3, "NaN"), (4, "missing")] {
+            let mut invalid_drafts = drafts.clone();
+            invalid_drafts[index] = invalid.into();
+            assert!(
+                manifest
+                    .config_from_drafts(&existing, &invalid_drafts)
+                    .is_err()
+            );
+        }
+        json["settings"][1]["key"] = "name".into();
+        std::fs::write(&path, serde_json::to_vec(&json).unwrap()).unwrap();
+        assert!(Manifest::read(&path).is_err());
     }
 
     #[cfg(unix)]

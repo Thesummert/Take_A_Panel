@@ -658,3 +658,87 @@ fn theme_follows_system_only_when_selected() {
     assert!(!ui.get_light_mode());
     ui.hide().unwrap();
 }
+
+#[test]
+fn addon_form_edits_and_saves_through_native_controls() {
+    slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+        i_slint_backend_testing::TestingBackendOptions {
+            renderer_name: Some("software".into()),
+            ..Default::default()
+        },
+    )))
+    .unwrap();
+    let ui = LauncherWindow::new().unwrap();
+    ui.set_addon_list(ModelRc::new(VecModel::from(vec!["Demo".into()])));
+    ui.set_addon_selected(0);
+    ui.set_addon_fields(ModelRc::new(VecModel::from(vec![AddonSettingRow {
+        label: "Name".into(),
+        value: "Hello".into(),
+        ..Default::default()
+    }])));
+    let edit = Rc::new(std::cell::RefCell::new(String::new()));
+    let output = edit.clone();
+    ui.on_addon_field_edited(move |_, value| *output.borrow_mut() = value.to_string());
+    let saved = Rc::new(Cell::new(-1));
+    let output = saved.clone();
+    ui.on_addon_save_fields(move |index| output.set(index));
+    ui.show().unwrap();
+    ui.invoke_open_settings();
+    click(&ui, 80., 360.);
+    click(&ui, 270., 310.);
+    key(&ui, "x".into());
+    assert!(
+        edit.borrow().contains('x'),
+        "field was not edited: {:?}",
+        edit.borrow()
+    );
+    click(&ui, 280., 400.);
+    assert_eq!(saved.get(), 0);
+    ui.hide().unwrap();
+}
+
+#[test]
+fn addon_form_scrolls_to_later_fields() {
+    slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+        i_slint_backend_testing::TestingBackendOptions {
+            renderer_name: Some("software".into()),
+            ..Default::default()
+        },
+    )))
+    .unwrap();
+    let ui = LauncherWindow::new().unwrap();
+    ui.set_addon_list(ModelRc::new(VecModel::from(vec!["Demo".into()])));
+    ui.set_addon_selected(0);
+    let rows: Vec<_> = (0..8)
+        .map(|i| AddonSettingRow {
+            label: format!("Field {i}").into(),
+            value: "value".into(),
+            ..Default::default()
+        })
+        .collect();
+    ui.set_addon_fields(ModelRc::new(VecModel::from(rows)));
+    let edited = Rc::new(Cell::new(-1));
+    let output = edited.clone();
+    ui.on_addon_field_edited(move |index, _| output.set(index));
+    ui.show().unwrap();
+    ui.invoke_open_settings();
+    click(&ui, 80., 360.);
+    ui.window().dispatch_event(WindowEvent::PointerScrolled {
+        position: slint::LogicalPosition::new(300., 330.),
+        delta_x: 0.,
+        delta_y: -500.,
+    });
+    for y in (280..390).step_by(10) {
+        click(&ui, 280., y as f32);
+        key(&ui, "x".into());
+        if edited.get() >= 5 {
+            break;
+        }
+    }
+    assert!(
+        edited.get() >= 5,
+        "later field not accessible, edited {}",
+        edited.get()
+    );
+    ui.hide().unwrap();
+}
