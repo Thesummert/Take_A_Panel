@@ -356,6 +356,9 @@ fn file_search_escape_returns_to_apps_and_settings_do_not_capture_shortcuts() {
     let folder_dialogs = Rc::new(Cell::new(0));
     let calls = folder_dialogs.clone();
     ui.on_browse_file_folder(move || calls.set(calls.get() + 1));
+    let program_dialogs = Rc::new(Cell::new(0));
+    let calls = program_dialogs.clone();
+    ui.on_browse_file_program(move || calls.set(calls.get() + 1));
     ui.show().unwrap();
     ui.set_file_search_mode(true);
     ui.set_query("报告".into());
@@ -363,6 +366,25 @@ fn file_search_escape_returns_to_apps_and_settings_do_not_capture_shortcuts() {
     assert!(ui.get_settings_open());
     assert!(!ui.get_shortcut_recording());
     ui.set_file_roots_draft("~/Documents\n~/Downloads".into());
+    click(&ui, 535., 120.);
+    assert_eq!(program_dialogs.get(), 0, "builtin needs no program");
+    ui.set_file_backend_draft(1);
+    click(&ui, 535., 120.);
+    assert_eq!(program_dialogs.get(), 1);
+    ui.set_file_program_dialog_open(true);
+    click(&ui, 535., 120.);
+    click(&ui, 400., 165.);
+    assert_eq!(
+        program_dialogs.get(),
+        1,
+        "prevent duplicate program dialogs"
+    );
+    assert_eq!(folder_dialogs.get(), 0, "wait for program selection");
+    ui.set_file_program_dialog_open(false);
+    ui.set_file_settings_busy(true);
+    click(&ui, 535., 120.);
+    assert_eq!(program_dialogs.get(), 1, "wait for settings to save");
+    ui.set_file_settings_busy(false);
     click(&ui, 400., 165.);
     assert_eq!(folder_dialogs.get(), 1);
     ui.set_file_folder_dialog_open(true);

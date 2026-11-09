@@ -13,6 +13,10 @@ pub fn pick_manifest() -> Result<Option<PathBuf>> {
     Ok(pick(Kind::Manifest)?.and_then(|paths| paths.into_iter().next()))
 }
 
+pub fn pick_program() -> Result<Option<PathBuf>> {
+    Ok(pick(Kind::Program)?.and_then(|paths| paths.into_iter().next()))
+}
+
 pub fn pick_folder() -> Result<Option<PathBuf>> {
     Ok(pick(Kind::Folder)?.and_then(|paths| paths.into_iter().next()))
 }
@@ -22,6 +26,7 @@ enum Kind {
     Background,
     Folder,
     Manifest,
+    Program,
 }
 
 impl Kind {
@@ -30,6 +35,7 @@ impl Kind {
             Self::Background => "选择背景图片",
             Self::Folder => "添加索引文件夹",
             Self::Manifest => "选择插件清单",
+            Self::Program => "选择搜索程序",
         }
     }
 }
@@ -80,6 +86,7 @@ fn portal(kind: Kind) -> Result<Option<Vec<PathBuf>>> {
             let filters = vec![("图片", vec![(1u32, "image/png"), (1u32, "image/jpeg")])];
             options.insert("filters", Value::from(filters));
         }
+        Kind::Program => {}
         Kind::Folder => {
             options.insert("directory", Value::from(true));
         }
@@ -136,6 +143,8 @@ fn candidates(desktop: &str) -> [&'static str; 3] {
 
 fn fallback_args(program: &str, kind: Kind) -> Vec<&'static str> {
     let mut args = match (program == "kdialog", kind) {
+        (true, Kind::Program) => vec!["--getopenfilename", ".", "*|所有文件", "--title"],
+        (false, Kind::Program) => vec!["--file-selection", "--title"],
         (true, Kind::Folder) => vec!["--getexistingdirectory", ".", "--title"],
         (true, Kind::Background) => vec![
             "--getopenfilename",
@@ -218,6 +227,22 @@ mod tests {
         assert_eq!(candidates("KDE")[0], "kdialog");
         assert_eq!(candidates("ubuntu:GNOME")[0], "zenity");
         assert_eq!(candidates("plasma:KDE")[0], "kdialog");
+    }
+
+    #[test]
+    fn program_fallbacks_allow_files_without_extension_filters() {
+        for program in ["zenity", "yad", "kdialog"] {
+            let args = fallback_args(program, Kind::Program);
+            assert!(args.contains(&"选择搜索程序"));
+            assert!(!args.contains(&"--directory"));
+            assert!(!args.contains(&"--multiple"));
+            assert!(!args.iter().any(|arg| arg.contains("file-filter")));
+            assert!(args.contains(&if program == "kdialog" {
+                "--getopenfilename"
+            } else {
+                "--file-selection"
+            }));
+        }
     }
 
     #[test]

@@ -99,6 +99,8 @@ export component SettingsPanel inherits Rectangle {
     in property <string> file-settings-message;
     callback save-file-roots(string);
     callback browse-file-folder();
+    callback browse-file-program();
+    in property <bool> file-program-dialog-open;
     callback rebuild-file-index();
     callback clear-file-index();
     callback save(string);
@@ -353,28 +355,29 @@ export component SettingsPanel inherits Rectangle {
                 Text { text: "文件搜索"; color: (AppTheme.light ? #211e2e : #f0eef8); font-size: 21px; font-weight: 600; }
                 HorizontalLayout {
                     spacing: 6px;
-                    ComboBox { model: root.file-everything-available ? ["内置", "ripgrep (rg)", "fd", "Everything (es)"] : ["内置", "ripgrep (rg)", "fd"]; current-index <=> root.file-backend-draft; }
-                    LineEdit { text <=> root.file-backend-program; placeholder-text: root.file-backend-draft == 3 ? "es.exe 路径（留空使用 PATH）" : "程序路径（留空使用 PATH）"; enabled: root.file-backend-draft != 0; }
-                    Button { text: "保存后端"; enabled: !root.file-settings-busy && !root.file-folder-dialog-open; clicked => { root.save-file-backend(root.file-backend-draft, root.file-backend-program); } }
+                    ComboBox { model: root.file-everything-available ? ["内置", "ripgrep (rg)", "fd", "Everything (es)"] : ["内置", "ripgrep (rg)", "fd"]; current-index <=> root.file-backend-draft; enabled: !root.file-settings-busy && !root.file-folder-dialog-open && !root.file-program-dialog-open; }
+                    LineEdit { min-width: 0px; text <=> root.file-backend-program; placeholder-text: root.file-backend-draft == 3 ? "es.exe 路径（留空使用 PATH）" : "程序路径（留空使用 PATH）"; enabled: root.file-backend-draft != 0 && !root.file-settings-busy && !root.file-folder-dialog-open && !root.file-program-dialog-open; }
+                    Button { text: "浏览…"; enabled: root.file-backend-draft != 0 && !root.file-settings-busy && !root.file-folder-dialog-open && !root.file-program-dialog-open; clicked => { root.browse-file-program(); } }
+                    Button { text: "保存后端"; enabled: !root.file-settings-busy && !root.file-folder-dialog-open && !root.file-program-dialog-open; clicked => { root.save-file-backend(root.file-backend-draft, root.file-backend-program); } }
                 }
                 Text { text: root.file-backend-draft == 3 ? "需运行 Everything 并单独安装 ES 命令行工具；程序路径请填写 es.exe。" : "索引范围：每行一个目录，支持 ~/；留空停用索引。"; color: (AppTheme.light ? #626170 : #a2a5b3); font-size: 11px; wrap: word-wrap; }
                 Button {
                     text: root.file-folder-dialog-open ? "正在选择文件夹…" : "添加文件夹…";
-                    enabled: !root.file-settings-busy && !root.file-folder-dialog-open;
+                    enabled: !root.file-settings-busy && !root.file-folder-dialog-open && !root.file-program-dialog-open;
                     clicked => { root.browse-file-folder(); }
                 }
                 TextEdit {
                     height: 70px;
                     text <=> root.file-roots-draft;
                     placeholder-text: "例如：~/Documents\n~/Downloads";
-                    enabled: !root.file-settings-busy && !root.file-folder-dialog-open;
+                    enabled: !root.file-settings-busy && !root.file-folder-dialog-open && !root.file-program-dialog-open;
                 }
 
                 HorizontalLayout {
                     spacing: 10px;
-                    Button { text: "清空索引缓存"; enabled: !root.file-settings-busy && !root.file-folder-dialog-open; clicked => { root.clear-file-index(); } }
-                    Button { text: "重建索引"; enabled: !root.file-settings-busy && !root.file-folder-dialog-open; clicked => { root.rebuild-file-index(); } }
-                    Button { text: root.file-settings-busy ? "正在保存…" : "保存并重建索引"; primary: true; enabled: !root.file-settings-busy && !root.file-folder-dialog-open; clicked => { root.save-file-roots(root.file-roots-draft); } }
+                    Button { text: "清空索引缓存"; enabled: !root.file-settings-busy && !root.file-folder-dialog-open && !root.file-program-dialog-open; clicked => { root.clear-file-index(); } }
+                    Button { text: "重建索引"; enabled: !root.file-settings-busy && !root.file-folder-dialog-open && !root.file-program-dialog-open; clicked => { root.rebuild-file-index(); } }
+                    Button { text: root.file-settings-busy ? "正在保存…" : "保存并重建索引"; primary: true; enabled: !root.file-settings-busy && !root.file-folder-dialog-open && !root.file-program-dialog-open; clicked => { root.save-file-roots(root.file-roots-draft); } }
                 }
                 Text { text: root.file-index-status; color: (AppTheme.light ? #626170 : #a2a5b3); font-size: 11px; wrap: word-wrap; }
                 Text { text: root.file-settings-message; color: root.file-settings-failed ? (AppTheme.light ? #a72e39 : #ef9b9b) : (AppTheme.light ? #217764 : #84c7b5); font-size: 11px; wrap: word-wrap; }

@@ -10,8 +10,10 @@ use std::{
 mod backend;
 mod controller;
 mod folder_picker;
+mod program_picker;
 pub use controller::Controller;
 pub use folder_picker::bind as bind_folder_picker;
+pub use program_picker::bind as bind_program_picker;
 
 const MAX_ENTRIES: usize = 250_000;
 const MAX_RESULTS: usize = 200;

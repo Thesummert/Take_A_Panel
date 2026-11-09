@@ -157,6 +157,8 @@ export component LauncherWindow inherits Window {
     in-out property <string> file-roots-draft;
     callback save-file-roots(string);
     callback browse-file-folder();
+    callback browse-file-program();
+    in property <bool> file-program-dialog-open;
     callback rebuild-file-index();
     callback clear-file-index();
     in property <[AppRow]> results;
@@ -717,6 +719,8 @@ export component LauncherWindow inherits Window {
             file-settings-message: root.file-settings-message;
             save-file-roots(value) => { root.save-file-roots(value); }
             browse-file-folder => { root.browse-file-folder(); }
+            browse-file-program => { root.browse-file-program(); }
+            file-program-dialog-open: root.file-program-dialog-open;
             rebuild-file-index => { root.rebuild-file-index(); }
             clear-file-index => { root.clear-file-index(); }
             draft <=> root.shortcut-draft;
