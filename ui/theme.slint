@@ -1,0 +1,6 @@
+export global AppTheme {
+    // 0 follows the system; 1 and 2 explicitly select dark and light.
+    in-out property <int> mode: 0;
+    in-out property <bool> system-light: false;
+    out property <bool> light: mode == 2 || (mode == 0 && system-light);
+}

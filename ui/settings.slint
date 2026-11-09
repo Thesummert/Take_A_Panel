@@ -1,10 +1,11 @@
+import { AppTheme } from "theme.slint";
 import { Button, ComboBox, Slider, TextEdit, LineEdit } from "std-widgets.slint";
 
 component ShortcutRow inherits HorizontalLayout {
     in property <string> action;
     in property <string> shortcut;
-    Text { text: root.action; color: #a2a5b3; font-size: 12px; vertical-alignment: center; }
-    Text { text: root.shortcut; color: #c3bed6; font-size: 12px; horizontal-alignment: right; vertical-alignment: center; }
+    Text { text: root.action; color: (AppTheme.light ? #626170 : #a2a5b3); font-size: 12px; vertical-alignment: center; }
+    Text { text: root.shortcut; color: (AppTheme.light ? #514b62 : #c3bed6); font-size: 12px; horizontal-alignment: right; vertical-alignment: center; }
 }
 
 component SettingsNavItem inherits Rectangle {
@@ -13,12 +14,12 @@ component SettingsNavItem inherits Rectangle {
     callback activated();
     height: 38px;
     border-radius: 7px;
-    background: root.selected ? #100d19.with-alpha(0.5) : (touch.has-hover ? #100d19.with-alpha(0.3) : transparent);
+    background: root.selected ? (AppTheme.light ? #625580 : #100d19).with-alpha(0.5) : (touch.has-hover ? (AppTheme.light ? #625580 : #100d19).with-alpha(0.3) : transparent);
     border-width: root.selected ? 1px : 0px;
-    border-color: #49405f;
+    border-color: (AppTheme.light ? #c6bddb : #49405f);
     Text {
         text: root.label;
-        color: root.selected ? #c4b7f5 : #b9b7c8;
+        color: root.selected ? (AppTheme.light ? #6046a8 : #c4b7f5) : (AppTheme.light ? #565267 : #b9b7c8);
         font-size: 13px;
         horizontal-alignment: center;
         vertical-alignment: center;
@@ -42,6 +43,7 @@ export component SettingsPanel inherits Rectangle {
     in-out property <float> background-opacity: 1;
     in-out property <float> background-blur: 0;
     callback save-appearance(string, float, float, int);
+    callback set-theme(int);
     callback browse-background();
     callback clear-background-cache();
     in-out property <string> window-width-draft;
@@ -95,7 +97,7 @@ export component SettingsPanel inherits Rectangle {
         else { page-focus.focus(); }
     }
 
-    background: #191a20;
+    background: (AppTheme.light ? #f8f7fb : #191a20);
     border-bottom-left-radius: 17px;
     border-bottom-right-radius: 17px;
     TouchArea { }
@@ -112,12 +114,12 @@ export component SettingsPanel inherits Rectangle {
             spacing: 0px;
             Rectangle {
                 width: 148px;
-                background: #16171d;
+                background: (AppTheme.light ? #efedf4 : #16171d);
                 border-bottom-left-radius: 17px;
                 VerticalLayout {
                     padding: 14px;
                     spacing: 12px;
-                    Text { text: "设置"; color: #858896; font-size: 12px; }
+                    Text { text: "设置"; color: (AppTheme.light ? #686575 : #858896); font-size: 12px; }
                     SettingsNavItem { label: "快捷键设置"; selected: root.page == 0; activated => { root.page = 0; root.focus-editor(); } }
                     SettingsNavItem { label: "外观设置"; selected: root.page == 1; activated => { root.page = 1; root.focus-editor(); } }
                     SettingsNavItem { label: "开机自启"; selected: root.page == 2; activated => { root.page = 2; root.focus-editor(); root.refresh-autostart(); } }
@@ -133,16 +135,16 @@ export component SettingsPanel inherits Rectangle {
                 visible: root.page == 0;
                 padding: 24px;
                 spacing: 12px;
-                Text { text: "快捷键设置"; color: #f0eef8; font-size: 21px; font-weight: 600; }
-                Text { text: "自定义显示 / 隐藏面板的全局快捷键"; color: #858896; font-size: 12px; }
+                Text { text: "快捷键设置"; color: (AppTheme.light ? #211e2e : #f0eef8); font-size: 21px; font-weight: 600; }
+                Text { text: "自定义显示 / 隐藏面板的全局快捷键"; color: (AppTheme.light ? #686575 : #858896); font-size: 12px; }
                 Rectangle { height: 6px; }
-                Text { text: "显示 / 隐藏面板"; color: #e7e7ef; font-size: 13px; }
+                Text { text: "显示 / 隐藏面板"; color: (AppTheme.light ? #292735 : #e7e7ef); font-size: 13px; }
                 Rectangle {
                     height: 36px;
                     border-radius: 6px;
-                    background: #22242c;
+                    background: (AppTheme.light ? #ffffff : #22242c);
                     border-width: 1px;
-                    border-color: hotkey-recorder.has-focus ? #b6a9ff : #34363f;
+                    border-color: hotkey-recorder.has-focus ? (AppTheme.light ? #6d55bf : #b6a9ff) : (AppTheme.light ? #d0ceda : #34363f);
                     hotkey-recorder := FocusScope {
                         accessible-role: button;
                         accessible-label: "快捷键录入，按下组合键";
@@ -159,7 +161,7 @@ export component SettingsPanel inherits Rectangle {
                         Text {
                             x: 12px; width: parent.width - 24px; height: parent.height;
                             text: root.draft == "" ? "请按下快捷键组合…" : root.draft;
-                            color: root.draft == "" ? #858896 : #f0eef8;
+                            color: root.draft == "" ? (AppTheme.light ? #686575 : #858896) : (AppTheme.light ? #211e2e : #f0eef8);
                             font-size: 14px; vertical-alignment: center;
                             overflow: elide;
                         }
@@ -169,10 +171,10 @@ export component SettingsPanel inherits Rectangle {
                         }
                     }
                 }
-                Text { text: "当前：" + root.current-hotkey; color: #858896; font-size: 11px; }
+                Text { text: "当前：" + root.current-hotkey; color: (AppTheme.light ? #686575 : #858896); font-size: 11px; }
                 Text {
                     text: "点击上方区域，直接按下组合键，再点击保存。\nmacOS：Alt = Option，Super = Command。";
-                    color: #747785; font-size: 11px;
+                    color: (AppTheme.light ? #696777 : #747785); font-size: 11px;
                 }
                 HorizontalLayout {
                     spacing: 10px;
@@ -183,12 +185,12 @@ export component SettingsPanel inherits Rectangle {
                 Text {
                     min-height: 32px;
                     text: root.message;
-                    color: root.failed ? #ef9b9b : #84c7b5;
+                    color: root.failed ? (AppTheme.light ? #a72e39 : #ef9b9b) : (AppTheme.light ? #217764 : #84c7b5);
                     font-size: 11px;
                     wrap: word-wrap;
                 }
-                Rectangle { height: 1px; background: #2c2e37; }
-                Text { text: "面板内快捷键"; color: #858896; font-size: 11px; }
+                Rectangle { height: 1px; background: (AppTheme.light ? #dedce6 : #2c2e37); }
+                Text { text: "面板内快捷键"; color: (AppTheme.light ? #686575 : #858896); font-size: 11px; }
                 ShortcutRow { action: "选择应用"; shortcut: "↑ / ↓"; }
                 ShortcutRow { action: "打开 / 新开实例"; shortcut: "Enter / Shift + Enter"; }
                 ShortcutRow { action: "隐藏 / 刷新 / 退出"; shortcut: "Esc / Ctrl + R / Ctrl + Q"; }
@@ -197,8 +199,13 @@ export component SettingsPanel inherits Rectangle {
             if root.page == 1: VerticalLayout {
                 padding: 24px;
                 spacing: 12px;
-                Text { text: "外观设置"; color: #f0eef8; font-size: 21px; font-weight: 600; }
-                Text { text: "背景图片（每行一个路径，留空恢复默认）"; color: #a2a5b3; font-size: 12px; }
+                Text { text: "外观设置"; color: (AppTheme.light ? #211e2e : #f0eef8); font-size: 21px; font-weight: 600; }
+                HorizontalLayout {
+                    spacing: 8px;
+                    Text { text: "主题"; color: (AppTheme.light ? #292735 : #e7e7ef); vertical-alignment: center; }
+                    ComboBox { enabled: !root.background-busy; model: ["跟随系统", "深色", "亮色"]; current-index: AppTheme.mode; selected(value) => { root.set-theme(self.current-index); } }
+                }
+                Text { text: "背景图片（每行一个路径，留空恢复默认）"; color: (AppTheme.light ? #626170 : #a2a5b3); font-size: 12px; }
                 HorizontalLayout {
                     spacing: 8px;
                     TextEdit { height: 75px; text <=> root.background-path; placeholder-text: "输入图片路径，或添加多张图片"; }
@@ -206,51 +213,51 @@ export component SettingsPanel inherits Rectangle {
                 }
                 HorizontalLayout {
                     spacing: 8px;
-                    Text { text: "切换方式"; color: #e7e7ef; vertical-alignment: center; }
+                    Text { text: "切换方式"; color: (AppTheme.light ? #292735 : #e7e7ef); vertical-alignment: center; }
                     ComboBox { model: ["固定第一张", "每次唤出时切换", "每 1 分钟", "每 5 分钟", "每 15 分钟", "每 30 分钟", "每 1 小时"]; current-index <=> root.background-rotation; }
                 }
-                Text { text: "图片不透明度：" + round(root.background-opacity * 100) + "%"; color: #e7e7ef; }
+                Text { text: "图片不透明度：" + round(root.background-opacity * 100) + "%"; color: (AppTheme.light ? #292735 : #e7e7ef); }
                 Slider { minimum: 0; maximum: 1; value <=> root.background-opacity; }
-                Text { text: "高斯模糊：" + round(root.background-blur) + " px"; color: #e7e7ef; }
+                Text { text: "高斯模糊：" + round(root.background-blur) + " px"; color: (AppTheme.light ? #292735 : #e7e7ef); }
                 Slider { minimum: 0; maximum: 30; value <=> root.background-blur; }
                 HorizontalLayout {
                     spacing: 8px;
                     Button { text: root.background-busy ? "正在处理…" : "保存外观"; enabled: !root.background-busy; primary: true; clicked => { root.save-appearance(root.background-path, root.background-opacity, root.background-blur, root.background-rotation); } }
                     Button { text: "清空背景缓存"; enabled: !root.background-busy; clicked => { root.clear-background-cache(); } }
                 }
-                Text { text: root.message; color: root.failed ? #ef9b9b : #84c7b5; font-size: 11px; wrap: word-wrap; }
+                Text { text: root.message; color: root.failed ? (AppTheme.light ? #a72e39 : #ef9b9b) : (AppTheme.light ? #217764 : #84c7b5); font-size: 11px; wrap: word-wrap; }
                 Rectangle { vertical-stretch: 1; }
             }
             if root.page == 4: VerticalLayout {
                 padding: 24px;
                 spacing: 16px;
-                Text { text: "窗口大小"; color: #f0eef8; font-size: 21px; font-weight: 600; }
-                Text { text: "设置面板的宽度和高度（逻辑像素）。"; color: #a2a5b3; font-size: 12px; }
+                Text { text: "窗口大小"; color: (AppTheme.light ? #211e2e : #f0eef8); font-size: 21px; font-weight: 600; }
+                Text { text: "设置面板的宽度和高度（逻辑像素）。"; color: (AppTheme.light ? #626170 : #a2a5b3); font-size: 12px; }
                 HorizontalLayout {
                     spacing: 10px;
-                    Text { text: "宽度"; color: #e7e7ef; vertical-alignment: center; }
+                    Text { text: "宽度"; color: (AppTheme.light ? #292735 : #e7e7ef); vertical-alignment: center; }
                     LineEdit { text <=> root.window-width-draft; input-type: number; }
-                    Text { text: "高度"; color: #e7e7ef; vertical-alignment: center; }
+                    Text { text: "高度"; color: (AppTheme.light ? #292735 : #e7e7ef); vertical-alignment: center; }
                     LineEdit { text <=> root.window-height-draft; input-type: number; }
                 }
-                Text { text: "宽度 680–1920，高度 540–1440；默认 680 × 540。"; color: #858896; font-size: 11px; wrap: word-wrap; }
+                Text { text: "宽度 680–1920，高度 540–1440；默认 680 × 540。"; color: (AppTheme.light ? #686575 : #858896); font-size: 11px; wrap: word-wrap; }
                 HorizontalLayout {
                     spacing: 10px;
                     Button { text: "恢复默认"; clicked => { root.window-width-draft = "680"; root.window-height-draft = "540"; } }
                     Button { text: "保存窗口大小"; primary: true; enabled: !root.background-busy; clicked => { root.save-window-size(root.window-width-draft, root.window-height-draft); } }
                 }
-                Text { text: root.message; color: root.failed ? #ef9b9b : #84c7b5; font-size: 11px; wrap: word-wrap; }
+                Text { text: root.message; color: root.failed ? (AppTheme.light ? #a72e39 : #ef9b9b) : (AppTheme.light ? #217764 : #84c7b5); font-size: 11px; wrap: word-wrap; }
                 Rectangle { vertical-stretch: 1; }
             }
             if root.page == 2: VerticalLayout {
                 padding: 24px;
                 spacing: 16px;
-                Text { text: "开机自启"; color: #f0eef8; font-size: 21px; font-weight: 600; }
+                Text { text: "开机自启"; color: (AppTheme.light ? #211e2e : #f0eef8); font-size: 21px; font-weight: 600; }
                 Text {
                     text: "登录系统后在后台启动 Take a Panel。\n使用全局快捷键或 P 菜单唤出面板。";
-                    color: #a2a5b3; font-size: 12px; wrap: word-wrap;
+                    color: (AppTheme.light ? #626170 : #a2a5b3); font-size: 12px; wrap: word-wrap;
                 }
-                Text { text: root.autostart-status; color: #e7e7ef; font-size: 14px; wrap: word-wrap; }
+                Text { text: root.autostart-status; color: (AppTheme.light ? #292735 : #e7e7ef); font-size: 14px; wrap: word-wrap; }
                 HorizontalLayout {
                     spacing: 10px;
                     Button {
@@ -268,15 +275,15 @@ export component SettingsPanel inherits Rectangle {
                 }
                 Text {
                     text: root.autostart-message;
-                    color: root.autostart-failed ? #ef9b9b : #84c7b5;
+                    color: root.autostart-failed ? (AppTheme.light ? #a72e39 : #ef9b9b) : (AppTheme.light ? #217764 : #84c7b5);
                     font-size: 12px; wrap: word-wrap;
                 }
                 Rectangle { vertical-stretch: 1; }
             }
             if root.page == 5: VerticalLayout {
                 padding: 20px; spacing: 7px;
-                Text { text: "插件"; color: #f0eef8; font-size: 21px; font-weight: 600; }
-                Text { text: "添加插件的 manifest.json 路径。插件会以当前用户权限运行。"; color: #a2a5b3; font-size: 11px; wrap: word-wrap; }
+                Text { text: "插件"; color: (AppTheme.light ? #211e2e : #f0eef8); font-size: 21px; font-weight: 600; }
+                Text { text: "添加插件的 manifest.json 路径。插件会以当前用户权限运行。"; color: (AppTheme.light ? #626170 : #a2a5b3); font-size: 11px; wrap: word-wrap; }
                 HorizontalLayout { spacing: 8px;
                     LineEdit { text <=> root.addon-manifest-draft; placeholder-text: "插件清单的完整路径"; }
                     Button { text: "添加插件"; clicked => { root.addon-add(root.addon-manifest-draft); } }
@@ -286,23 +293,23 @@ export component SettingsPanel inherits Rectangle {
                     Button { text: root.addon-enabled ? "停用" : "启用"; enabled: root.addon-selected >= 0; clicked => { root.addon-set-enabled(root.addon-selected, !root.addon-enabled); } }
                     Button { text: "删除"; enabled: root.addon-selected >= 0; clicked => { root.addon-remove(root.addon-selected); } }
                 }
-                Text { text: "插件配置（JSON 对象）"; color: #e7e7ef; font-size: 12px; }
+                Text { text: "插件配置（JSON 对象）"; color: (AppTheme.light ? #292735 : #e7e7ef); font-size: 12px; }
                 TextEdit { height: 90px; text <=> root.addon-config-draft; enabled: root.addon-selected >= 0; }
                 Button { text: "保存插件配置"; enabled: root.addon-selected >= 0; clicked => { root.addon-save-config(root.addon-selected, root.addon-config-draft); } }
-                Text { text: root.addon-message; color: root.addon-failed ? #ef9b9b : #84c7b5; font-size: 11px; wrap: word-wrap; }
+                Text { text: root.addon-message; color: root.addon-failed ? (AppTheme.light ? #a72e39 : #ef9b9b) : (AppTheme.light ? #217764 : #84c7b5); font-size: 11px; wrap: word-wrap; }
                 Rectangle { vertical-stretch: 1; }
             }
             if root.page == 3: VerticalLayout {
                 padding: 20px;
                 spacing: 6px;
-                Text { text: "文件搜索"; color: #f0eef8; font-size: 21px; font-weight: 600; }
+                Text { text: "文件搜索"; color: (AppTheme.light ? #211e2e : #f0eef8); font-size: 21px; font-weight: 600; }
                 HorizontalLayout {
                     spacing: 6px;
                     ComboBox { model: root.file-everything-available ? ["内置", "ripgrep (rg)", "fd", "Everything (es)"] : ["内置", "ripgrep (rg)", "fd"]; current-index <=> root.file-backend-draft; }
                     LineEdit { text <=> root.file-backend-program; placeholder-text: "程序路径（留空使用 PATH）"; enabled: root.file-backend-draft != 0; }
                     Button { text: "保存后端"; enabled: !root.file-settings-busy && !root.file-folder-dialog-open; clicked => { root.save-file-backend(root.file-backend-draft, root.file-backend-program); } }
                 }
-                Text { text: root.file-backend-draft == 3 ? "Everything 使用自身索引；需运行 Everything 并安装 ES。" : "索引范围：每行一个目录，支持 ~/；留空停用索引。"; color: #a2a5b3; font-size: 11px; wrap: word-wrap; }
+                Text { text: root.file-backend-draft == 3 ? "Everything 使用自身索引；需运行 Everything 并安装 ES。" : "索引范围：每行一个目录，支持 ~/；留空停用索引。"; color: (AppTheme.light ? #626170 : #a2a5b3); font-size: 11px; wrap: word-wrap; }
                 Button {
                     text: root.file-folder-dialog-open ? "正在选择文件夹…" : "添加文件夹…";
                     enabled: !root.file-settings-busy && !root.file-folder-dialog-open;
@@ -321,8 +328,8 @@ export component SettingsPanel inherits Rectangle {
                     Button { text: "重建索引"; enabled: !root.file-settings-busy && !root.file-folder-dialog-open; clicked => { root.rebuild-file-index(); } }
                     Button { text: root.file-settings-busy ? "正在保存…" : "保存并重建索引"; primary: true; enabled: !root.file-settings-busy && !root.file-folder-dialog-open; clicked => { root.save-file-roots(root.file-roots-draft); } }
                 }
-                Text { text: root.file-index-status; color: #a2a5b3; font-size: 11px; wrap: word-wrap; }
-                Text { text: root.file-settings-message; color: root.file-settings-failed ? #ef9b9b : #84c7b5; font-size: 11px; wrap: word-wrap; }
+                Text { text: root.file-index-status; color: (AppTheme.light ? #626170 : #a2a5b3); font-size: 11px; wrap: word-wrap; }
+                Text { text: root.file-settings-message; color: root.file-settings-failed ? (AppTheme.light ? #a72e39 : #ef9b9b) : (AppTheme.light ? #217764 : #84c7b5); font-size: 11px; wrap: word-wrap; }
 
                 Rectangle { vertical-stretch: 1; }
             }

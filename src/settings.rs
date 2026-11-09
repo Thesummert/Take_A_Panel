@@ -61,6 +61,29 @@ impl Settings {
         Self { directory }
     }
 
+    pub fn load_theme(&self) -> Result<Option<i32>> {
+        match std::fs::read_to_string(self.directory.join("theme")) {
+            Ok(value) => match value.trim() {
+                "system" => Ok(Some(0)),
+                "dark" => Ok(Some(1)),
+                "light" => Ok(Some(2)),
+                _ => bail!("已保存的主题无效"),
+            },
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(error).context("无法读取主题设置"),
+        }
+    }
+
+    pub fn save_theme(&self, mode: i32) -> Result<()> {
+        let value = match mode {
+            0 => "system",
+            1 => "dark",
+            2 => "light",
+            _ => bail!("主题无效"),
+        };
+        self.save_text("theme", value).context("无法保存主题设置")
+    }
+
     pub fn load_window_size(&self) -> Result<Option<(u32, u32)>> {
         match std::fs::read_to_string(self.directory.join("window-size")) {
             Ok(value) => Ok(Some(parse_window_size(&value)?)),
@@ -184,6 +207,26 @@ pub fn parse_window_size(value: &str) -> Result<(u32, u32)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn theme_round_trip_and_invalid_value() {
+        let mut random = [0; 8];
+        getrandom::fill(&mut random).unwrap();
+        let path =
+            std::env::temp_dir().join(format!("panel-theme-{:016x}", u64::from_ne_bytes(random)));
+        let settings = Settings::new(path.clone());
+        assert_eq!(settings.load_theme().unwrap(), None);
+        settings.save_theme(2).unwrap();
+        assert_eq!(settings.load_theme().unwrap(), Some(2));
+        settings.save_theme(1).unwrap();
+        assert_eq!(settings.load_theme().unwrap(), Some(1));
+        settings.save_theme(0).unwrap();
+        assert_eq!(settings.load_theme().unwrap(), Some(0));
+        assert!(settings.save_theme(3).is_err());
+        std::fs::write(path.join("theme"), "invalid").unwrap();
+        assert!(settings.load_theme().is_err());
+        std::fs::remove_dir_all(path).unwrap();
+    }
 
     #[test]
     fn window_size_round_trip_and_validation() {

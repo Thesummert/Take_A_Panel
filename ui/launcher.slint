@@ -1,3 +1,4 @@
+import { AppTheme } from "theme.slint";
 import { Button, ListView, Palette } from "std-widgets.slint";
 import { SettingsPanel } from "settings.slint";
 export { LauncherTray } from "tray.slint";
@@ -20,12 +21,12 @@ component ContextItem inherits Rectangle {
     callback activated();
     height: 34px;
     border-radius: 6px;
-    background: touch.has-hover ? #100d19.with-alpha(0.45) : transparent;
+    background: touch.has-hover ? (AppTheme.light ? #625580 : #100d19).with-alpha(0.45) : transparent;
     HorizontalLayout {
         padding-left: 12px; padding-right: 12px;
-        Text { text: root.label; color: #e7e7ef; font-size: 12px; vertical-alignment: center; }
+        Text { text: root.label; color: (AppTheme.light ? #292735 : #e7e7ef); font-size: 12px; vertical-alignment: center; }
         Rectangle { horizontal-stretch: 1; }
-        Text { text: root.shortcut; color: #898797; font-size: 11px; vertical-alignment: center; }
+        Text { text: root.shortcut; color: (AppTheme.light ? #686575 : #898797); font-size: 11px; vertical-alignment: center; }
     }
     touch := TouchArea { mouse-cursor: pointer; clicked => { root.activated(); } }
 }
@@ -39,12 +40,12 @@ component KeyCap inherits Rectangle {
         width: parent.width;
         height: 22px;
         border-radius: 5px;
-        background: #24262d;
+        background: (AppTheme.light ? #eeedf4 : #24262d);
         border-width: 1px;
-        border-color: #34363f;
+        border-color: (AppTheme.light ? #d0ceda : #34363f);
         label-text := Text {
             text: root.label;
-            color: #a2a5b3;
+            color: (AppTheme.light ? #626170 : #a2a5b3);
             font-size: 11px;
             horizontal-alignment: center;
             vertical-alignment: center;
@@ -62,7 +63,16 @@ export component LauncherWindow inherits Window {
     background: transparent;
     default-font-size: 14px;
     default-font-weight: 400;
-    init => { Palette.color-scheme = ColorScheme.dark; }
+    init => { Palette.color-scheme = AppTheme.light ? ColorScheme.light : ColorScheme.dark; }
+    changed light-mode => {
+        Palette.color-scheme = root.light-mode ? ColorScheme.light : ColorScheme.dark;
+        root.theme-changed();
+    }
+    in property <bool> light-mode: AppTheme.light;
+    in-out property <int> theme-mode <=> AppTheme.mode;
+    in-out property <bool> system-light <=> AppTheme.system-light;
+    callback set-theme(int);
+    callback theme-changed();
 
     in property <int> window-width: 680;
     in property <int> window-height: 540;
@@ -235,9 +245,9 @@ export component LauncherWindow inherits Window {
         y: 12px;
         width: parent.width - 24px;
         height: parent.height - 24px;
-        background: #191a20;
+        background: (AppTheme.light ? #f8f7fb : #191a20);
         border-radius: 18px;
-        border-color: #363841;
+        border-color: (AppTheme.light ? #d7d4e0 : #363841);
         border-width: 1px;
         clip: true;
 
@@ -258,23 +268,24 @@ export component LauncherWindow inherits Window {
                         Rectangle {
                             y: (parent.height - 7px) / 2;
                             width: 7px; height: 7px; border-radius: 4px;
-                            background: #a89bff;
+                            background: (AppTheme.light ? #6d55bf : #a89bff);
                         }
                     }
-                    Text { text: root.file-search-mode ? "文件搜索 · Esc 返回" : "TAKE A PANEL"; color: #b9b7c8; font-size: 11px; font-weight: 700; vertical-alignment: center; }
+                    Text { text: root.file-search-mode ? "文件搜索 · Esc 返回" : "TAKE A PANEL"; color: (AppTheme.light ? #565267 : #b9b7c8); font-size: 11px; font-weight: 700; vertical-alignment: center; }
                     Rectangle { horizontal-stretch: 1; }
-                    Text { text: root.hotkey-label; color: #747785; font-size: 11px; vertical-alignment: center; }
+                    Text { text: root.hotkey-label; color: (AppTheme.light ? #696777 : #747785); font-size: 11px; vertical-alignment: center; }
                     Rectangle {
                         width: 42px;
                         Rectangle {
                             y: (parent.height - 25px) / 2;
                             width: parent.width; height: 25px; border-radius: 6px;
-                            background: settings-touch.has-hover ? #100d19.with-alpha(0.4) : transparent;
+                            background: settings-touch.has-hover ? (AppTheme.light ? #625580 : #100d19).with-alpha(0.4) : transparent;
                             Image {
                                 x: (parent.width - self.width) / 2;
                                 y: (parent.height - self.height) / 2;
                                 width: 18px; height: 18px;
                                 source: @image-url("assets/settings.svg");
+                                colorize: AppTheme.light ? #565267 : transparent;
                             }
                         }
                         settings-touch := TouchArea {
@@ -289,8 +300,8 @@ export component LauncherWindow inherits Window {
                         Rectangle {
                             y: (parent.height - 25px) / 2;
                             width: 25px; height: 25px; border-radius: 6px;
-                            background: quit-touch.has-hover ? #100d19.with-alpha(0.4) : transparent;
-                            Text { text: "×"; color: #9193a2; horizontal-alignment: center; vertical-alignment: center; font-size: 19px; }
+                            background: quit-touch.has-hover ? (AppTheme.light ? #625580 : #100d19).with-alpha(0.4) : transparent;
+                            Text { text: "×"; color: (AppTheme.light ? #656373 : #9193a2); horizontal-alignment: center; vertical-alignment: center; font-size: 19px; }
                         }
                         quit-touch := TouchArea { clicked => { root.dismiss(); } }
                     }
@@ -307,7 +318,7 @@ export component LauncherWindow inherits Window {
                             y: (parent.height - 24px) / 2;
                             width: 24px; height: 24px;
                             commands: "M 16 16 L 22 22 M 18 10 A 8 8 0 1 1 2 10 A 8 8 0 1 1 18 10";
-                            stroke: #b6a9ff; stroke-width: 1.7px;
+                            stroke: (AppTheme.light ? #6d55bf : #b6a9ff); stroke-width: 1.7px;
                         }
                     }
                     FocusScope {
@@ -344,14 +355,14 @@ export component LauncherWindow inherits Window {
                         if (root.query == ""): Text {
                             x: 0px; y: 0px; width: parent.width; height: parent.height;
                             text: root.clipboard-mode ? "搜索剪贴板记录" : (root.file-search-mode ? "搜索文件、文件夹或路径" : "搜索应用，输入 clp 查看剪贴板");
-                            color: #717482;
+                            color: (AppTheme.light ? #74717f : #717482);
                             font-size: 23px;
                             vertical-alignment: center;
                         }
                         search := TextInput {
                             x: 0px; y: 0px; width: parent.width; height: parent.height;
                             text <=> root.query;
-                            color: #f0eef8;
+                            color: (AppTheme.light ? #211e2e : #f0eef8);
                             font-size: 23px;
                             vertical-alignment: center;
                             single-line: true;
@@ -370,7 +381,7 @@ export component LauncherWindow inherits Window {
                 }
             }
 
-            Rectangle { height: 1px; background: #2c2e37; }
+            Rectangle { height: 1px; background: (AppTheme.light ? #dedce6 : #2c2e37); }
 
             Rectangle {
                 height: 36px;
@@ -380,7 +391,7 @@ export component LauncherWindow inherits Window {
                         text: root.clipboard-mode ? "剪贴板记录" : root.file-search-mode
                             ? (root.file-indexing ? "正在建立文件索引…" : (root.file-querying ? "正在搜索文件…" : "文件搜索"))
                             : (root.scanning ? "正在发现应用…" : (root.query == "" ? "全部应用" : "搜索结果"));
-                        color: #858896; font-size: 11px;
+                        color: (AppTheme.light ? #686575 : #858896); font-size: 11px;
                         vertical-alignment: center;
                     }
                     Rectangle { horizontal-stretch: 1; }
@@ -388,7 +399,7 @@ export component LauncherWindow inherits Window {
                         text: root.file-search-mode && root.file-match-count > root.results.length
                             ? "显示 " + root.results.length + " / " + root.file-match-count + " 项"
                             : root.results.length + " 个";
-                        color: #686c7b; font-size: 11px; vertical-alignment: center;
+                        color: (AppTheme.light ? #74717f : #686c7b); font-size: 11px; vertical-alignment: center;
                     }
                 }
             }
@@ -404,9 +415,9 @@ export component LauncherWindow inherits Window {
                         width: results-view.visible-width;
                         height: 66px;
                         border-radius: 10px;
-                        background: root.selected-index == index ? #100d19.with-alpha(0.5) : (row-touch.has-hover ? #100d19.with-alpha(0.3) : transparent);
+                        background: root.selected-index == index ? (AppTheme.light ? #625580 : #100d19).with-alpha(0.5) : (row-touch.has-hover ? (AppTheme.light ? #625580 : #100d19).with-alpha(0.3) : transparent);
                         border-width: root.selected-index == index ? 1px : 0px;
-                        border-color: #49405f;
+                        border-color: (AppTheme.light ? #c6bddb : #49405f);
                         HorizontalLayout {
                             padding-left: 12px; padding-right: 14px; spacing: 13px;
                             Rectangle {
@@ -431,12 +442,12 @@ export component LauncherWindow inherits Window {
                             VerticalLayout {
                                 spacing: 4px;
                                 alignment: center;
-                                Text { text: app.name; color: #e7e7ef; font-size: 14px; overflow: elide; }
-                                Text { text: app.detail; color: #818391; font-size: 11px; overflow: elide; }
+                                Text { text: app.name; color: (AppTheme.light ? #292735 : #e7e7ef); font-size: 14px; overflow: elide; }
+                                Text { text: app.detail; color: (AppTheme.light ? #686575 : #818391); font-size: 11px; overflow: elide; }
                             }
                             if (root.selected-index == index): Text {
                                 text: root.launching ? "…" : (app.monogram == "SS" || app.monogram == "CLP" ? "进入" : (root.clipboard-mode || app.monogram == "=" ? "复制" : (app.addon-result ? "执行" : "打开")));
-                                color: #b2a2e8; font-size: 11px; width: 30px;
+                                color: (AppTheme.light ? #6146a8 : #b2a2e8); font-size: 11px; width: 30px;
                                 vertical-alignment: center;
                             }
                         }
@@ -462,13 +473,13 @@ export component LauncherWindow inherits Window {
                         text: root.clipboard-mode ? "没有剪贴板记录" : root.file-search-mode
                             ? (root.file-indexing ? "正在建立文件索引" : (root.file-querying ? "正在搜索" : "没有找到匹配的文件或文件夹"))
                             : (root.scanning ? "正在整理你的应用" : "没有找到匹配的应用");
-                        color: #c3bed6; font-size: 17px; horizontal-alignment: center;
+                        color: (AppTheme.light ? #514b62 : #c3bed6); font-size: 17px; horizontal-alignment: center;
                     }
                     Text {
                         text: root.clipboard-mode ? "复制文本或图片后会自动记录" : root.file-search-mode
                             ? (root.file-indexing ? "索引在后台建立，完成后自动显示结果" : (root.file-backend-active == 3 ? "试试其他搜索词，或检查 Everything 是否运行" : (root.file-count == 0 ? "请先在设置中添加文件索引范围" : "试试文件、文件夹名称或路径，Ctrl + R 重建索引")))
                             : (root.scanning ? "稍等片刻，即可开始" : "试试其他名称，或按 Ctrl + R 重新扫描");
-                        color: #747785; font-size: 12px; horizontal-alignment: center;
+                        color: (AppTheme.light ? #696777 : #747785); font-size: 12px; horizontal-alignment: center;
                     }
                     if root.file-search-mode: Button { text: "设置索引范围"; clicked => { root.open-file-search-settings(); } }
                 }
@@ -479,28 +490,28 @@ export component LauncherWindow inherits Window {
                 Text {
                     x: 22px; width: parent.width - 44px;
                     text: root.error-message != "" ? root.error-message : (root.file-search-mode ? root.file-index-status : root.notice);
-                    color: root.error-message != "" ? #ef9b9b : #b5a47a;
+                    color: root.error-message != "" ? (AppTheme.light ? #a72e39 : #ef9b9b) : (AppTheme.light ? #765b22 : #b5a47a);
                     font-size: 11px; overflow: elide; vertical-alignment: center;
                 }
             }
 
-            Rectangle { height: 1px; background: #2c2e37; }
+            Rectangle { height: 1px; background: (AppTheme.light ? #dedce6 : #2c2e37); }
             Rectangle {
                 height: 44px;
                 HorizontalLayout {
                     padding-left: 20px; padding-right: 20px; spacing: 7px;
                     KeyCap { label: "↑ ↓"; }
-                    Text { text: "选择"; font-size: 11px; color: #7d8090; vertical-alignment: center; }
+                    Text { text: "选择"; font-size: 11px; color: (AppTheme.light ? #696777 : #7d8090); vertical-alignment: center; }
                     Rectangle { width: 6px; }
                     KeyCap { label: "Enter"; }
-                    Text { text: root.clipboard-mode || root.calculation-selected ? "复制" : (root.file-search-mode ? "打开" : (root.addon-selected-result ? "执行" : "打开应用")); font-size: 11px; color: #7d8090; vertical-alignment: center; }
+                    Text { text: root.clipboard-mode || root.calculation-selected ? "复制" : (root.file-search-mode ? "打开" : (root.addon-selected-result ? "执行" : "打开应用")); font-size: 11px; color: (AppTheme.light ? #696777 : #7d8090); vertical-alignment: center; }
                     Rectangle { width: 6px; }
                     if !root.file-search-mode && !root.clipboard-mode && !root.calculation-selected && !root.addon-selected-result: KeyCap { label: "Shift + Enter"; }
-                    if !root.file-search-mode && !root.clipboard-mode && !root.calculation-selected && !root.addon-selected-result: Text { text: "新开"; font-size: 11px; color: #7d8090; vertical-alignment: center; }
+                    if !root.file-search-mode && !root.clipboard-mode && !root.calculation-selected && !root.addon-selected-result: Text { text: "新开"; font-size: 11px; color: (AppTheme.light ? #696777 : #7d8090); vertical-alignment: center; }
                     Rectangle { horizontal-stretch: 1; }
                     Text {
                         text: root.clipboard-mode ? "最多保存 100 条记录" : root.file-search-mode ? (root.file-backend-active == 3 ? root.file-count + " 项结果" : root.file-count + " 项已索引") : (root.scanning ? "扫描中" : root.total-count + " 个应用已就绪");
-                        font-size: 11px; color: #747785;
+                        font-size: 11px; color: (AppTheme.light ? #696777 : #747785);
                         vertical-alignment: center;
                     }
                     Rectangle {
@@ -508,8 +519,8 @@ export component LauncherWindow inherits Window {
                         Rectangle {
                             y: (parent.height - 26px) / 2;
                             width: 28px; height: 26px; border-radius: 6px;
-                            background: refresh-touch.has-hover ? #100d19.with-alpha(0.4) : transparent;
-                            Text { text: "↻"; color: #9893b5; font-size: 19px; horizontal-alignment: center; vertical-alignment: center; }
+                            background: refresh-touch.has-hover ? (AppTheme.light ? #625580 : #100d19).with-alpha(0.4) : transparent;
+                            Text { text: "↻"; color: (AppTheme.light ? #665784 : #9893b5); font-size: 19px; horizontal-alignment: center; vertical-alignment: center; }
                         }
                         refresh-touch := TouchArea { clicked => { root.refresh(); } }
                     }
@@ -525,8 +536,8 @@ export component LauncherWindow inherits Window {
                 x: root.context-x; y: root.context-y;
                 width: 196px;
                 height: menu.preferred-height + 12px;
-                background: #24232d;
-                border-color: #494251; border-width: 1px; border-radius: 10px;
+                background: (AppTheme.light ? #ffffff : #24232d);
+                border-color: (AppTheme.light ? #c9c5d2 : #494251); border-width: 1px; border-radius: 10px;
                 menu := VerticalLayout {
                     padding: 6px; spacing: 2px;
                     ContextItem {
@@ -542,7 +553,7 @@ export component LauncherWindow inherits Window {
                         label: "复制路径";
                         activated => { root.context-open = false; root.copy-result-path(root.context-index); root.focus-search(); }
                     }
-                    Rectangle { height: 1px; background: #3a3844; }
+                    Rectangle { height: 1px; background: (AppTheme.light ? #dedce6 : #3a3844); }
                     ContextItem {
                         label: root.file-search-mode ? "重建文件索引" : "刷新"; shortcut: "Ctrl + R";
                         activated => { root.context-open = false; root.refresh(); root.focus-search(); }
@@ -562,6 +573,7 @@ export component LauncherWindow inherits Window {
             window-width-draft <=> root.window-width-draft;
             window-height-draft <=> root.window-height-draft;
             save-window-size(width, height) => { root.save-window-size(width, height); }
+            set-theme(mode) => { root.set-theme(mode); }
             background-busy: root.background-busy;
             background-path <=> root.background-path;
             background-rotation <=> root.background-rotation;

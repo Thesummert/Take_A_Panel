@@ -22,6 +22,7 @@ struct Appearance {
     path: String,
     opacity: f32,
     blur: f32,
+    light: bool,
 }
 
 impl Appearance {
@@ -36,7 +37,7 @@ impl Appearance {
         if self.path.is_empty() || self.opacity == 0.0 {
             return Ok(None);
         }
-        let source = SourceKey::new(&self.path, width, height)?;
+        let source = SourceKey::new(&self.path, width, height, self.light)?;
         let sigma = self.blur * scale;
         let key = cache_key(&source, sigma, self.opacity);
         if let Some(image) = cache.get(key) {
@@ -77,10 +78,11 @@ struct SourceKey {
     modified: SystemTime,
     width: u32,
     height: u32,
+    light: bool,
 }
 
 impl SourceKey {
-    fn new(path: &str, width: u32, height: u32) -> Result<Self> {
+    fn new(path: &str, width: u32, height: u32, light: bool) -> Result<Self> {
         let path = std::fs::canonicalize(path).context("无法读取背景图片")?;
         let metadata = std::fs::metadata(&path)?;
         Ok(Self {
@@ -89,6 +91,7 @@ impl SourceKey {
             modified: metadata.modified()?,
             width,
             height,
+            light,
         })
     }
 }
@@ -155,9 +158,11 @@ impl BackgroundCache {
                 .to_rgba8();
             // Composite before blur: RGB is cheaper and transparent edges have
             // the correct matte instead of bleeding unassociated RGB values.
-            self.source = Some((source, flatten(&resized, 1.0)));
+            let matte = panel_color(source.light);
+            self.source = Some((source, flatten(&resized, 1.0, matte)));
             self.blurred = None;
         }
+        let matte = panel_color(self.source.as_ref().unwrap().0.light);
         let base = &self.source.as_ref().unwrap().1;
         let prepared = if sigma > 0.0 {
             if self.blurred.as_ref().map(|(key, _)| *key) != Some(sigma.to_bits()) {
@@ -178,8 +183,7 @@ impl BackgroundCache {
         if opacity < 1.0 {
             let tables: [[u8; 256]; 3] = std::array::from_fn(|channel| {
                 std::array::from_fn(|value| {
-                    (value as f32 * opacity + [25.0, 26.0, 32.0][channel] * (1.0 - opacity)).round()
-                        as u8
+                    (value as f32 * opacity + matte[channel] as f32 * (1.0 - opacity)).round() as u8
                 })
             });
             for pixel in image.as_flat_samples_mut().samples.as_chunks_mut::<3>().0 {
@@ -287,7 +291,11 @@ fn write_cached(path: &Path, key: u64, image: &image::RgbImage) -> Result<()> {
     result
 }
 
-fn flatten(image: &image::RgbaImage, opacity: f32) -> image::RgbImage {
+fn panel_color(light: bool) -> [u8; 3] {
+    if light { [248, 247, 251] } else { [25, 26, 32] }
+}
+
+fn flatten(image: &image::RgbaImage, opacity: f32, matte: [u8; 3]) -> image::RgbImage {
     let mut output = image::RgbImage::new(image.width(), image.height());
     for (pixel, target) in image
         .as_raw()
@@ -303,7 +311,7 @@ fn flatten(image: &image::RgbaImage, opacity: f32) -> image::RgbImage {
         let alpha = pixel[3] as f32 / 255.0 * opacity;
         for channel in 0..3 {
             target[channel] = (pixel[channel] as f32 * alpha
-                + [25.0, 26.0, 32.0][channel] * (1.0 - alpha))
+                + matte[channel] as f32 * (1.0 - alpha))
                 .round() as u8;
         }
     }
@@ -395,6 +403,7 @@ struct Rotation {
     config: RefCell<AppearanceConfig>,
     index: std::cell::Cell<usize>,
     pending: std::cell::Cell<bool>,
+    theme_pending: std::cell::Cell<bool>,
     timer: slint::Timer,
     pump: slint::Timer,
     cache: Arc<Mutex<BackgroundCache>>,
@@ -402,12 +411,27 @@ struct Rotation {
 }
 
 impl Rotation {
+    fn refresh_theme(self: &Rc<Self>) {
+        let Some(ui) = self.ui.upgrade() else {
+            return;
+        };
+        if ui.get_background_busy() {
+            self.theme_pending.set(true);
+            return;
+        }
+        self.theme_pending.set(false);
+        let config = self.config.borrow().clone();
+        self.apply(config.clone(), self.index.get(), false);
+        self.warm(config, ui.window().scale_factor().clamp(1.0, 3.0));
+    }
+
     fn warm(&self, config: AppearanceConfig, scale: f32) {
         let Some(ui) = self.ui.upgrade() else {
             return;
         };
         let width = ((ui.get_window_width() - 24) as f32 * scale).round() as u32;
         let height = ((ui.get_window_height() - 24) as f32 * scale).round() as u32;
+        let light = ui.get_light_mode();
         let generation = self.generation.fetch_add(1, Ordering::SeqCst) + 1;
         let revision = self.generation.clone();
         let cache = self.cache.clone();
@@ -422,7 +446,7 @@ impl Rotation {
                 if config.opacity == 0.0 {
                     break;
                 }
-                let Ok(source) = SourceKey::new(path, width, height) else {
+                let Ok(source) = SourceKey::new(path, width, height, light) else {
                     continue;
                 };
                 let key = cache_key(&source, config.blur * scale, config.opacity);
@@ -437,6 +461,7 @@ impl Rotation {
                     path: path.clone(),
                     opacity: config.opacity,
                     blur: config.blur,
+                    light,
                 };
                 let file = disk.as_ref().map(|dir| dir.join(format!("{key:016x}.rgb")));
                 let image = file
@@ -511,6 +536,9 @@ impl Rotation {
                     }
                 }
                 rotation.pending.set(false);
+                if rotation.theme_pending.get() {
+                    rotation.refresh_theme();
+                }
             },
         );
         let cache = self.cache.clone();
@@ -625,12 +653,15 @@ impl Rotation {
                         }
                     }
                 }
-                if rotation.pending.replace(false) && !save {
+                if rotation.theme_pending.get() {
+                    rotation.refresh_theme();
+                } else if rotation.pending.replace(false) && !save {
                     rotation.advance();
                 }
             },
         );
         let cache = self.cache.clone();
+        let light = ui.get_light_mode();
         std::thread::spawn(move || {
             let result = (|| -> Result<_> {
                 if save {
@@ -642,6 +673,7 @@ impl Rotation {
                     path: config.paths.get(index).cloned().unwrap_or_default(),
                     opacity: config.opacity,
                     blur: config.blur,
+                    light,
                 };
                 let disk = settings::directory()
                     .ok()
@@ -670,6 +702,14 @@ impl Rotation {
 }
 
 pub fn bind(ui: &LauncherWindow) {
+    let theme_settings = settings::directory().map(settings::Settings::new);
+    if let Ok(settings) = &theme_settings {
+        match settings.load_theme() {
+            Ok(Some(mode)) => ui.set_theme_mode(mode),
+            Ok(None) => {}
+            Err(error) => eprintln!("无法读取主题设置：{error:#}"),
+        }
+    }
     let loaded = AppearanceConfig::load().ok();
     let config = loaded.clone().unwrap_or(AppearanceConfig {
         paths: vec![],
@@ -686,6 +726,7 @@ pub fn bind(ui: &LauncherWindow) {
         config: RefCell::new(config.clone()),
         index: std::cell::Cell::new(0),
         pending: std::cell::Cell::new(false),
+        theme_pending: std::cell::Cell::new(false),
         timer: slint::Timer::default(),
         pump: slint::Timer::default(),
         cache: Arc::new(Mutex::new(BackgroundCache::default())),
@@ -696,6 +737,33 @@ pub fn bind(ui: &LauncherWindow) {
         rotation.apply(config.clone(), 0, false);
         rotation.warm(config, ui.window().scale_factor().clamp(1.0, 3.0));
     }
+    let on_theme = rotation.clone();
+    ui.on_set_theme(move |mode| {
+        let Some(ui) = on_theme.ui.upgrade() else {
+            return;
+        };
+        if ui.get_background_busy() {
+            return;
+        }
+        let result = settings::directory()
+            .map(settings::Settings::new)
+            .and_then(|s| s.save_theme(mode));
+        match result {
+            Ok(()) => {
+                ui.set_theme_mode(mode);
+                ui.set_settings_failed(false);
+                ui.set_settings_message("主题已保存。".into());
+            }
+            Err(error) => {
+                ui.set_settings_failed(true);
+                ui.set_settings_message(format!("保存主题失败：{error:#}").into());
+            }
+        }
+    });
+    let on_theme_changed = rotation.clone();
+    ui.on_theme_changed(move || {
+        on_theme_changed.refresh_theme();
+    });
     let on_size = rotation.clone();
     ui.on_window_size_applied(move || {
         let config = on_size.config.borrow().clone();
@@ -762,6 +830,7 @@ mod tests {
                 path: path.to_string_lossy().into_owned(),
                 opacity: 1.0,
                 blur: 0.0,
+                light: false,
             };
             let image = appearance
                 .render(16, 16, 1.0, &mut cache, Some(&disk))
@@ -845,6 +914,7 @@ mod tests {
             config: RefCell::new(config),
             index: std::cell::Cell::new(0),
             pending: std::cell::Cell::new(false),
+            theme_pending: std::cell::Cell::new(false),
             timer: slint::Timer::default(),
             pump: slint::Timer::default(),
             cache: Arc::new(Mutex::new(BackgroundCache::default())),
@@ -888,6 +958,7 @@ mod tests {
             path: path.to_string_lossy().into_owned(),
             opacity: 1.0,
             blur: 2.0,
+            light: false,
         };
         let mut cache = BackgroundCache::default();
         let first = appearance
@@ -968,13 +1039,18 @@ mod tests {
             path: path.to_string_lossy().into_owned(),
             opacity: 0.8,
             blur: 15.0,
+            light: false,
         };
         let started = Instant::now();
         let old = image::open(&path)
             .unwrap()
             .resize_to_fill(656, 516, image::imageops::FilterType::Triangle)
             .to_rgba8();
-        std::hint::black_box(flatten(&image::imageops::blur(&old, 15.0), 0.8));
+        std::hint::black_box(flatten(
+            &image::imageops::blur(&old, 15.0),
+            0.8,
+            panel_color(false),
+        ));
         println!("previous: {:?}", started.elapsed());
         let mut cache = BackgroundCache::default();
         let started = Instant::now();
@@ -1005,8 +1081,18 @@ mod tests {
     #[test]
     fn flatten_combines_image_alpha_and_opacity_over_panel_color() {
         let image = image::RgbaImage::from_pixel(1, 1, image::Rgba([225, 126, 132, 128]));
-        assert_eq!(flatten(&image, 0.5).get_pixel(0, 0).0, [75, 51, 57]);
-        assert_eq!(flatten(&image, 0.0).get_pixel(0, 0).0, [25, 26, 32]);
+        assert_eq!(
+            flatten(&image, 0.5, panel_color(false)).get_pixel(0, 0).0,
+            [75, 51, 57]
+        );
+        assert_eq!(
+            flatten(&image, 0.0, panel_color(false)).get_pixel(0, 0).0,
+            [25, 26, 32]
+        );
+        assert_eq!(
+            flatten(&image, 0.0, panel_color(true)).get_pixel(0, 0).0,
+            [248, 247, 251]
+        );
     }
 
     #[test]
@@ -1020,6 +1106,7 @@ mod tests {
             path: path.to_string_lossy().into_owned(),
             opacity: 1.0,
             blur: 2.0,
+            light: false,
         };
         let image = appearance
             .render(64, 48, 1.0, &mut BackgroundCache::default(), None)

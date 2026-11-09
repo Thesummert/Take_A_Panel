@@ -116,12 +116,12 @@ fn settings_navigation_moves_selected_style_between_pages() {
     });
     ui.set_background_path("/tmp/a.png\n/tmp/b.png".into());
     ui.set_background_rotation(3);
-    click(&ui, 280., 401.);
+    click(&ui, 280., 441.);
     assert_eq!(*saved.borrow(), Some(("/tmp/a.png\n/tmp/b.png".into(), 3)));
     let cleared = Rc::new(Cell::new(false));
     let result = cleared.clone();
     ui.on_clear_background_cache(move || result.set(true));
-    click(&ui, 540., 401.);
+    click(&ui, 540., 441.);
     assert!(cleared.get());
     ui.hide().unwrap();
 }
@@ -631,5 +631,30 @@ fn addon_settings_page_accepts_manifest_path() {
     ui.on_addon_add(move |value| *output.borrow_mut() = value.to_string());
     click(&ui, 600., 150.);
     assert_eq!(&*added.borrow(), "/tmp/demo/manifest.json");
+    ui.hide().unwrap();
+}
+
+#[test]
+fn theme_follows_system_only_when_selected() {
+    slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+        i_slint_backend_testing::TestingBackendOptions {
+            renderer_name: Some("software".into()),
+            ..Default::default()
+        },
+    )))
+    .unwrap();
+    let ui = LauncherWindow::new().unwrap();
+    ui.show().unwrap();
+    assert_eq!(ui.get_theme_mode(), 0);
+    assert!(!ui.get_light_mode());
+    ui.set_system_light(true);
+    assert!(ui.get_light_mode());
+    ui.set_theme_mode(1);
+    assert!(!ui.get_light_mode());
+    ui.set_system_light(false);
+    ui.set_theme_mode(2);
+    assert!(ui.get_light_mode());
+    ui.set_theme_mode(0);
+    assert!(!ui.get_light_mode());
     ui.hide().unwrap();
 }

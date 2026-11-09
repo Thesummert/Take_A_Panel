@@ -896,6 +896,9 @@ fn present(ui: &LauncherWindow, reset: bool, focus: &WindowFocus) {
             return;
         }
         ui.window().with_winit_window(|window| {
+            if let Some(theme) = window.theme() {
+                ui.set_system_light(theme == winit::window::Theme::Light);
+            }
             if let Some(monitor) = window.current_monitor() {
                 let origin = monitor.position();
                 let screen = monitor.size();
@@ -1202,6 +1205,11 @@ fn run_server(options: Options, mut server: server::Server) -> Result<()> {
     let weak = ui.as_weak();
     let mut modifiers = winit::keyboard::ModifiersState::empty();
     ui.window().on_winit_window_event(move |window, event| {
+        if let winit::event::WindowEvent::ThemeChanged(theme) = event
+            && let Some(ui) = weak.upgrade()
+        {
+            ui.set_system_light(*theme == winit::window::Theme::Light);
+        }
         if let winit::event::WindowEvent::ModifiersChanged(state) = event {
             modifiers = state.state();
         }
