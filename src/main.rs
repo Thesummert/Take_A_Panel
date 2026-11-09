@@ -239,12 +239,15 @@ impl Controller {
                         .into(),
                     tint: slint::Color::from_argb_encoded(0xff000000 | colors[color_index]),
                     has_icon: icon.size().width > 0,
+                    app_result: true,
+                    has_path: matches!(app.target, apps::LaunchTarget::File(_)),
                     icon,
                 }
             })
             .collect::<Vec<_>>();
         *self.matches.borrow_mut() = matches;
         *self.calculation.borrow_mut() = calculation;
+        ui.invoke_close_context_menu();
         self.rows.set_vec(rows);
         ui.set_selected_index(0);
     }
@@ -281,11 +284,13 @@ impl Controller {
                         tint: slint::Color::from_rgb_u8(183, 164, 244),
                         has_icon: icon.is_some(),
                         icon: icon.unwrap_or_default(),
+                        ..Default::default()
                     }
                 }
             })
             .collect();
         *self.clipboard_matches.borrow_mut() = entries;
+        ui.invoke_close_context_menu();
         self.rows.set_vec(rows);
         ui.set_results(ModelRc::from(self.rows.clone()));
         ui.set_selected_index(0);
@@ -326,6 +331,45 @@ impl Controller {
             let _ = sender.send(WorkerEvent::ScanFinished);
         });
         self.start_pump();
+    }
+
+    fn copy_result_path(&self, row: i32) {
+        let Some(ui) = self.ui.upgrade() else { return };
+        let path = if ui.get_file_search_mode() {
+            self.files.result_path(row)
+        } else if !ui.get_clipboard_mode() {
+            usize::try_from(row)
+                .ok()
+                .and_then(|row| self.matches.borrow().get(row).copied())
+                .and_then(|target| match target {
+                    ResultTarget::App(index) => {
+                        self.apps
+                            .borrow()
+                            .get(index)
+                            .and_then(|app| match &app.target {
+                                apps::LaunchTarget::File(path) => Some(path.clone()),
+                                #[cfg(target_os = "windows")]
+                                apps::LaunchTarget::AppId(_) => None,
+                            })
+                    }
+                    _ => None,
+                })
+        } else {
+            None
+        };
+        if let Some(path) = path {
+            match self
+                .clipboard
+                .borrow()
+                .copy(clipboard::Entry::Text(path.to_string_lossy().into_owned()))
+            {
+                Ok(()) => {
+                    ui.set_error_message("".into());
+                    ui.set_notice("路径已复制".into());
+                }
+                Err(error) => ui.set_error_message(error.into()),
+            }
+        }
     }
 
     fn launch(self: &Rc<Self>, row: i32, new_instance: bool) {
@@ -754,6 +798,12 @@ fn run_server(options: Options, mut server: server::Server) -> Result<()> {
     ui.on_launch_selected(move |index, new_instance| {
         if let Some(c) = weak.upgrade() {
             c.launch(index, new_instance);
+        }
+    });
+    let weak = Rc::downgrade(&controller);
+    ui.on_copy_result_path(move |index| {
+        if let Some(c) = weak.upgrade() {
+            c.copy_result_path(index);
         }
     });
     let weak = Rc::downgrade(&controller);

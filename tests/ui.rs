@@ -31,6 +31,57 @@ fn click(ui: &LauncherWindow, x: f32, y: f32) {
 }
 
 #[test]
+fn right_click_selects_result_and_menu_runs_its_action() {
+    slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+        i_slint_backend_testing::TestingBackendOptions {
+            renderer_name: Some("software".into()),
+            ..Default::default()
+        },
+    )))
+    .unwrap();
+    let ui = LauncherWindow::new().unwrap();
+    ui.set_results(ModelRc::new(VecModel::from(vec![
+        AppRow {
+            name: "One".into(),
+            app_result: true,
+            has_path: true,
+            ..Default::default()
+        },
+        AppRow {
+            name: "Two".into(),
+            app_result: true,
+            has_path: true,
+            ..Default::default()
+        },
+    ])));
+    let action = Rc::new(Cell::new(-1));
+    let result = action.clone();
+    ui.on_copy_result_path(move |index| result.set(index));
+    let launches = Rc::new(Cell::new(0));
+    let count = launches.clone();
+    ui.on_launch_selected(move |_, _| count.set(count.get() + 1));
+    ui.show().unwrap();
+    ui.invoke_focus_search();
+    let position = slint::LogicalPosition::new(100., 245.);
+    ui.window()
+        .dispatch_event(WindowEvent::PointerMoved { position });
+    ui.window().dispatch_event(WindowEvent::PointerPressed {
+        position,
+        button: PointerEventButton::Right,
+    });
+    ui.window().dispatch_event(WindowEvent::PointerReleased {
+        position,
+        button: PointerEventButton::Right,
+    });
+    assert_eq!(ui.get_selected_index(), 1);
+    assert_eq!(launches.get(), 0);
+    // The third menu item copies the path of the right-clicked row.
+    click(&ui, 120., 330.);
+    assert_eq!(action.get(), 1);
+    ui.hide().unwrap();
+}
+
+#[test]
 fn large_lists_only_fetch_visible_rows_and_can_scroll_to_distant_results() {
     use slint::{Model, ModelTracker};
     struct LargeModel(Rc<Cell<usize>>);
@@ -413,6 +464,7 @@ fn keyboard_navigation_search_submit_and_empty_results() {
             tint: slint::Color::from_argb_encoded(0xff000000 | tint),
             has_icon: icon.size().width > 0,
             icon,
+            ..Default::default()
         }
     })
     .collect::<Vec<_>>();

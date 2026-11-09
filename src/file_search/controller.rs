@@ -351,14 +351,8 @@ impl Controller {
         self.start_pump();
     }
 
-    pub fn open(self: &Rc<Self>, row: i32) {
-        let Some(ui) = self.ui.upgrade() else {
-            return;
-        };
-        if ui.get_launching() {
-            return;
-        }
-        let path = usize::try_from(row)
+    pub fn result_path(&self, row: i32) -> Option<PathBuf> {
+        usize::try_from(row)
             .ok()
             .and_then(|row| self.matches.borrow().get(row).copied())
             .and_then(|index| {
@@ -367,7 +361,17 @@ impl Controller {
                     .entries
                     .get(index)
                     .map(|entry| entry.path.clone())
-            });
+            })
+    }
+
+    pub fn open(self: &Rc<Self>, row: i32) {
+        let Some(ui) = self.ui.upgrade() else {
+            return;
+        };
+        if ui.get_launching() {
+            return;
+        }
+        let path = self.result_path(row);
         let Some(path) = path else {
             return;
         };
@@ -464,6 +468,7 @@ impl Controller {
                     if generation == self.query_revision.load(Ordering::Relaxed)
                         && ui.get_file_search_mode() =>
                 {
+                    ui.invoke_close_context_menu();
                     self.querying.set(false);
                     ui.set_file_querying(false);
                     ui.set_file_match_count(matches.total as i32);

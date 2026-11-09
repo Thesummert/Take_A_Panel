@@ -9,6 +9,24 @@ export struct AppRow {
     tint: color,
     icon: image,
     has-icon: bool,
+    app-result: bool,
+    has-path: bool,
+}
+
+component ContextItem inherits Rectangle {
+    in property <string> label;
+    in property <string> shortcut;
+    callback activated();
+    height: 34px;
+    border-radius: 6px;
+    background: touch.has-hover ? #343046 : transparent;
+    HorizontalLayout {
+        padding-left: 12px; padding-right: 12px;
+        Text { text: root.label; color: #e7e7ef; font-size: 12px; vertical-alignment: center; }
+        Rectangle { horizontal-stretch: 1; }
+        Text { text: root.shortcut; color: #898797; font-size: 11px; vertical-alignment: center; }
+    }
+    touch := TouchArea { mouse-cursor: pointer; clicked => { root.activated(); } }
 }
 
 component KeyCap inherits Rectangle {
@@ -87,6 +105,12 @@ export component LauncherWindow inherits Window {
     in property <string> error-message;
     in-out property <string> query;
     in-out property <int> selected-index: 0;
+    property <bool> context-open: false;
+    property <length> context-x;
+    property <length> context-y;
+    property <int> context-index: -1;
+    property <bool> context-app: false;
+    property <bool> context-path: false;
     property <bool> calculation-selected: !root.file-search-mode && !root.clipboard-mode
         && root.selected-index >= 0 && root.selected-index < root.results.length
         && root.results[root.selected-index].monogram == "=";
@@ -99,6 +123,7 @@ export component LauncherWindow inherits Window {
     out property <bool> shortcut-recording: root.settings-open && settings-panel.recording;
     callback query-edited(string);
     callback launch-selected(int, bool);
+    callback copy-result-path(int);
     callback dismiss();
     callback refresh();
     callback refresh-apps();
@@ -107,6 +132,7 @@ export component LauncherWindow inherits Window {
     callback capture-shortcut(string, bool, bool, bool, bool);
 
     public function open-settings() {
+        root.context-open = false;
         root.shortcut-draft = root.configured-hotkey;
         root.settings-message = "";
         root.settings-failed = false;
@@ -134,6 +160,7 @@ export component LauncherWindow inherits Window {
     }
 
     public function leave-file-search() {
+        root.context-open = false;
         root.file-search-mode = false;
         root.clipboard-mode = false;
         root.query = "";
@@ -148,7 +175,12 @@ export component LauncherWindow inherits Window {
         else { search.focus(); }
     }
 
+    public function close-context-menu() {
+        root.context-open = false;
+    }
+
     public function reset-search() {
+        root.context-open = false;
         root.settings-open = false;
         root.file-search-mode = false;
         root.clipboard-mode = false;
@@ -252,7 +284,8 @@ export component LauncherWindow inherits Window {
                         horizontal-stretch: 1;
                         capture-key-pressed(event) => {
                             if (event.text == Key.Escape) {
-                                if (root.file-search-mode || root.clipboard-mode) { root.leave-file-search(); }
+                                if (root.context-open) { root.context-open = false; }
+                                else if (root.file-search-mode || root.clipboard-mode) { root.leave-file-search(); }
                                 else { root.dismiss(); }
                                 return accept;
                             }
@@ -295,6 +328,7 @@ export component LauncherWindow inherits Window {
                             selection-background-color: #6d5bc5;
                             selection-foreground-color: white;
                             edited => {
+                                root.context-open = false;
                                 root.selected-index = 0;
                                 results-view.content-y = 0px;
                                 root.query-edited(self.text);
@@ -378,6 +412,17 @@ export component LauncherWindow inherits Window {
                         }
                         row-touch := TouchArea {
                             clicked => { root.selected-index = index; root.launch-selected(index, false); }
+                            pointer-event(event) => {
+                                if (event.button == PointerEventButton.right && event.kind == PointerEventKind.down) {
+                                    root.selected-index = index;
+                                    root.context-index = index;
+                                    root.context-app = app.app-result && !root.file-search-mode && !root.clipboard-mode;
+                                    root.context-path = root.file-search-mode || (root.context-app && app.has-path);
+                                    root.context-x = min(max(0px, self.absolute-position.x + self.mouse-x - 12px), parent.width - 196px);
+                                    root.context-y = min(max(0px, self.absolute-position.y + self.mouse-y - 12px), root.height - 220px);
+                                    root.context-open = true;
+                                }
+                            }
                         }
                     }
                 }
@@ -437,6 +482,44 @@ export component LauncherWindow inherits Window {
                             Text { text: "↻"; color: #9893b5; font-size: 19px; horizontal-alignment: center; vertical-alignment: center; }
                         }
                         refresh-touch := TouchArea { clicked => { root.refresh(); } }
+                    }
+                }
+            }
+        }
+
+        if root.context-open && !root.settings-open: Rectangle {
+            width: parent.width; height: parent.height;
+            background: transparent;
+            TouchArea { clicked => { root.context-open = false; root.focus-search(); } }
+            Rectangle {
+                x: root.context-x; y: root.context-y;
+                width: 196px;
+                height: menu.preferred-height + 12px;
+                background: #24232d;
+                border-color: #494251; border-width: 1px; border-radius: 10px;
+                menu := VerticalLayout {
+                    padding: 6px; spacing: 2px;
+                    ContextItem {
+                        label: root.clipboard-mode || root.calculation-selected ? "复制" : (root.file-search-mode || root.context-app ? "打开" : "进入");
+                        shortcut: "Enter";
+                        activated => { root.context-open = false; root.launch-selected(root.context-index, false); }
+                    }
+                    if root.context-app: ContextItem {
+                        label: "新开实例"; shortcut: "Shift + Enter";
+                        activated => { root.context-open = false; root.launch-selected(root.context-index, true); }
+                    }
+                    if root.context-path: ContextItem {
+                        label: "复制路径";
+                        activated => { root.context-open = false; root.copy-result-path(root.context-index); root.focus-search(); }
+                    }
+                    Rectangle { height: 1px; background: #3a3844; }
+                    ContextItem {
+                        label: root.file-search-mode ? "重建文件索引" : "刷新"; shortcut: "Ctrl + R";
+                        activated => { root.context-open = false; root.refresh(); root.focus-search(); }
+                    }
+                    ContextItem {
+                        label: "设置";
+                        activated => { root.context-open = false; root.open-settings(); }
                     }
                 }
             }
