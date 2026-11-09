@@ -1,0 +1,67 @@
+{
+  "api_version": 1,
+  "id": "quick-translator",
+  "name": "Quick Translator",
+  "keyword": "tr",
+  "executable": "../../target/debug/quick-translator",
+  "settings": [
+    {
+      "key": "source_language",
+      "type": "choice",
+      "label": "默认源语言代码",
+      "description": "选择语言代码，例如 en（英语）、zh-CN（简体中文）、ja（日语）。",
+      "default": "en",
+      "options": [
+        "en",
+        "zh-CN",
+        "zh-TW",
+        "ja",
+        "ko",
+        "fr",
+        "de",
+        "es",
+        "pt",
+        "it",
+        "ru",
+        "ar",
+        "hi",
+        "th",
+        "vi",
+        "id",
+        "nl",
+        "pl",
+        "tr",
+        "uk"
+      ]
+    },
+    {
+      "key": "target_language",
+      "type": "choice",
+      "label": "默认目标语言代码",
+      "description": "选择语言代码，例如 en（英语）、zh-CN（简体中文）、ja（日语）。",
+      "default": "zh-CN",
+      "options": [
+        "en",
+        "zh-CN",
+        "zh-TW",
+        "ja",
+        "ko",
+        "fr",
+        "de",
+        "es",
+        "pt",
+        "it",
+        "ru",
+        "ar",
+        "hi",
+        "th",
+        "vi",
+        "id",
+        "nl",
+        "pl",
+        "tr",
+        "uk"
+      ]
+    }
+  ]
+}

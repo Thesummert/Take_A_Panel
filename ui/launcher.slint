@@ -1,8 +1,17 @@
 import { AppTheme } from "theme.slint";
-import { Button, ListView, Palette } from "std-widgets.slint";
+import { Button, ListView, Palette, ComboBox, TextEdit, ScrollView, LineEdit } from "std-widgets.slint";
 import { SettingsPanel, AddonSettingRow } from "settings.slint";
 export { AddonSettingRow } from "settings.slint";
 export { LauncherTray } from "tray.slint";
+
+export struct AddonPanelRow {
+    key: string,
+    label: string,
+    kind: int,
+    value: string,
+    options: [string],
+    option-index: int,
+}
 
 export struct AppRow {
     name: string,
@@ -103,6 +112,17 @@ export component LauncherWindow inherits Window {
     callback open-autostart-system-settings();
     in-out property <bool> file-search-mode;
     in-out property <bool> clipboard-mode;
+    in-out property <bool> addon-panel-open;
+    in property <bool> addon-panel-busy;
+    in property <string> addon-panel-title;
+    in property <string> addon-panel-focus;
+    property <int> addon-panel-focus-request;
+    in property <string> addon-panel-submit-label;
+    in property <string> addon-panel-message;
+    in property <[AddonPanelRow]> addon-panel-fields;
+    callback addon-panel-edited(int, string);
+    callback addon-panel-submit();
+    callback addon-panel-close();
     in property <bool> file-indexing;
     in property <bool> file-querying;
     in property <bool> file-settings-busy;
@@ -194,7 +214,7 @@ export component LauncherWindow inherits Window {
 
     public function close-settings() {
         root.settings-open = false;
-        search.focus();
+        root.focus-search();
     }
 
     public function open-file-search-settings() {
@@ -216,6 +236,7 @@ export component LauncherWindow inherits Window {
 
     public function focus-search() {
         if (root.settings-open) { settings-panel.focus-editor(); }
+        else if (root.addon-panel-open) { panel-focus.focus(); root.addon-panel-focus-request += 1; }
         else { search.focus(); }
     }
 
@@ -226,6 +247,7 @@ export component LauncherWindow inherits Window {
     public function reset-search() {
         root.context-open = false;
         root.settings-open = false;
+        if (root.addon-panel-open) { root.addon-panel-close(); }
         root.file-search-mode = false;
         root.clipboard-mode = false;
         root.query = "";
@@ -313,6 +335,7 @@ export component LauncherWindow inherits Window {
             }
 
             Rectangle {
+                visible: !root.addon-panel-open;
                 height: 68px;
                 HorizontalLayout {
                     padding-left: 24px; padding-right: 24px; spacing: 16px;
@@ -385,9 +408,10 @@ export component LauncherWindow inherits Window {
                 }
             }
 
-            Rectangle { height: 1px; background: (AppTheme.light ? #dedce6 : #2c2e37); }
+            Rectangle { visible: !root.addon-panel-open; height: 1px; background: (AppTheme.light ? #dedce6 : #2c2e37); }
 
             Rectangle {
+                visible: !root.addon-panel-open;
                 height: 36px;
                 HorizontalLayout {
                     padding-left: 22px; padding-right: 22px;
@@ -409,6 +433,7 @@ export component LauncherWindow inherits Window {
             }
 
             Rectangle {
+                visible: !root.addon-panel-open;
                 vertical-stretch: 1;
                 results-view := ListView {
                     x: 10px; width: parent.width - 20px;
@@ -490,6 +515,7 @@ export component LauncherWindow inherits Window {
             }
 
             if (root.error-message != "" || (root.file-search-mode ? root.file-index-status != "" : root.notice != "")): Rectangle {
+                visible: !root.addon-panel-open;
                 height: 34px;
                 Text {
                     x: 22px; width: parent.width - 44px;
@@ -499,8 +525,9 @@ export component LauncherWindow inherits Window {
                 }
             }
 
-            Rectangle { height: 1px; background: (AppTheme.light ? #dedce6 : #2c2e37); }
+            Rectangle { visible: !root.addon-panel-open; height: 1px; background: (AppTheme.light ? #dedce6 : #2c2e37); }
             Rectangle {
+                visible: !root.addon-panel-open;
                 height: 44px;
                 HorizontalLayout {
                     padding-left: 20px; padding-right: 20px; spacing: 7px;
@@ -566,6 +593,68 @@ export component LauncherWindow inherits Window {
                         label: "设置";
                         activated => { root.context-open = false; root.open-settings(); }
                     }
+                }
+            }
+        }
+
+        Rectangle {
+            x: 1px; y: 45px;
+            width: parent.width - 2px; height: parent.height - 46px;
+            visible: root.addon-panel-open && !root.settings-open;
+            background: transparent;
+            TouchArea { }
+            panel-focus := FocusScope {
+                capture-key-pressed(event) => {
+                    if (event.text == Key.Escape) { root.addon-panel-close(); root.focus-search(); return accept; }
+                    return reject;
+                }
+                VerticalLayout {
+                    padding: 20px; spacing: 8px;
+                    HorizontalLayout {
+                        spacing: 12px;
+                        Text { text: root.addon-panel-title; color: (AppTheme.light ? #211e2e : #f0eef8); font-size: 20px; font-weight: 600; vertical-alignment: center; }
+                        Rectangle { horizontal-stretch: 1; }
+                        Button { text: "返回"; clicked => { root.addon-panel-close(); root.focus-search(); } }
+                    }
+                    ScrollView {
+                        vertical-stretch: 1;
+                        VerticalLayout {
+                            spacing: 6px;
+                            for field[index] in root.addon-panel-fields: VerticalLayout {
+                                spacing: 4px;
+                                Text { text: field.label; color: (AppTheme.light ? #292735 : #e7e7ef); font-size: 12px; }
+                                if field.kind == 0: TextEdit {
+                                    height: 90px; text: field.value; enabled: !root.addon-panel-busy;
+                                    init => { if (field.key == root.addon-panel-focus) { self.focus(); } }
+                                    property <int> focus-request: root.addon-panel-focus-request;
+                                    changed focus-request => { if (field.key == root.addon-panel-focus) { self.focus(); } }
+                                    key-pressed(event) => {
+                                        if (event.text == Key.Return && !event.modifiers.shift && !event.modifiers.control && !event.modifiers.alt && !event.modifiers.meta) {
+                                            if (!root.addon-panel-busy) { root.addon-panel-submit(); }
+                                            return accept;
+                                        }
+                                        return reject;
+                                    }
+                                    edited(value) => { root.addon-panel-edited(index, value); }
+                                }
+                                if field.kind == 3: LineEdit {
+                                    text: field.value; enabled: !root.addon-panel-busy;
+                                    init => { if (field.key == root.addon-panel-focus) { self.focus(); } }
+                                    property <int> focus-request: root.addon-panel-focus-request;
+                                    changed focus-request => { if (field.key == root.addon-panel-focus) { self.focus(); } }
+                                    edited(value) => { root.addon-panel-edited(index, value); }
+                                    accepted => { root.addon-panel-submit(); }
+                                }
+                                if field.kind == 1: ComboBox {
+                                    model: field.options; current-index: field.option-index; enabled: !root.addon-panel-busy;
+                                    selected(value) => { root.addon-panel-edited(index, value); }
+                                }
+                                if field.kind == 2: TextEdit { height: 90px; text: field.value; read-only: true; }
+                            }
+                        }
+                    }
+                    Text { text: root.addon-panel-message; color: (AppTheme.light ? #a72e39 : #ef9b9b); font-size: 12px; wrap: word-wrap; }
+                    Button { text: root.addon-panel-busy ? "处理中…" : root.addon-panel-submit-label; enabled: !root.addon-panel-busy; clicked => { root.addon-panel-submit(); } }
                 }
             }
         }

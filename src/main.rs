@@ -52,7 +52,12 @@ enum WorkerEvent {
     ScanFinished,
     Launched(Result<launch_history::History, String>),
     AddonSearch(u64, Result<Option<Vec<addons::Item>>, String>),
-    AddonActivated(Result<(String, bool), String>),
+    AddonActivated(
+        u64,
+        (addons::Addon, addons::Manifest, String, String),
+        Result<(String, bool, Option<addons::Panel>), String>,
+    ),
+    AddonPanelSubmitted(u64, Result<Option<addons::Panel>, String>),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -80,6 +85,12 @@ struct Controller {
     addon_pending: std::cell::Cell<bool>,
     addon_settings: RefCell<Option<settings::Settings>>,
     addon_form: RefCell<Option<(i32, addons::Manifest, Vec<String>)>>,
+    addon_panel: RefCell<
+        Option<(
+            (addons::Addon, addons::Manifest, String, String),
+            addons::Panel,
+        )>,
+    >,
     icons: RefCell<Vec<slint::Image>>,
     rows: Rc<VecModel<AppRow>>,
     sender: mpsc::Sender<WorkerEvent>,
@@ -139,6 +150,7 @@ impl Controller {
             addon_pending: std::cell::Cell::new(false),
             addon_settings: RefCell::default(),
             addon_form: RefCell::default(),
+            addon_panel: RefCell::default(),
             icons: RefCell::new(Vec::new()),
             rows: Rc::new(VecModel::default()),
             sender,
@@ -177,6 +189,71 @@ impl Controller {
                 ui.set_addon_message(format!("{error:#}").into());
             }
         }
+        let weak = Rc::downgrade(self);
+        ui.on_addon_panel_edited(move |index, value| {
+            if let Some(c) = weak.upgrade()
+                && let Some((_, panel)) = c.addon_panel.borrow_mut().as_mut()
+                && let Some(field) = usize::try_from(index)
+                    .ok()
+                    .and_then(|i| panel.fields.get_mut(i))
+                && field.kind != "output"
+                && value.len() <= 8192
+            {
+                field.value = value.to_string();
+            }
+        });
+        let weak = Rc::downgrade(self);
+        ui.on_addon_panel_close(move || {
+            if let Some(c) = weak.upgrade() {
+                c.addon_revision.fetch_add(1, Ordering::Relaxed);
+                c.addon_panel.borrow_mut().take();
+                if let Some(ui) = c.ui.upgrade() {
+                    ui.set_addon_panel_open(false);
+                    ui.set_addon_panel_busy(false);
+                }
+            }
+        });
+        let weak = Rc::downgrade(self);
+        ui.on_addon_panel_submit(move || {
+            let Some(c) = weak.upgrade() else {
+                return;
+            };
+            let Some(ui) = c.ui.upgrade() else {
+                return;
+            };
+            if ui.get_addon_panel_busy() {
+                return;
+            }
+            let Some((context, panel)) = c.addon_panel.borrow().clone() else {
+                return;
+            };
+            let values: serde_json::Map<String, serde_json::Value> = panel
+                .fields
+                .iter()
+                .filter(|f| f.kind != "output")
+                .map(|f| (f.key.clone(), f.value.clone().into()))
+                .collect();
+            let generation = c.addon_revision.fetch_add(1, Ordering::Relaxed) + 1;
+            let revision = c.addon_revision.clone();
+            let sender = c.sender.clone();
+            ui.set_addon_panel_busy(true);
+            ui.set_addon_panel_message("".into());
+            std::thread::spawn(move || {
+                let (addon, manifest, query, id) = context;
+                let result = addons::submit_panel(
+                    &addon,
+                    &manifest,
+                    &query,
+                    &id,
+                    &serde_json::Value::Object(values),
+                    &revision,
+                    generation,
+                )
+                .map_err(|e| format!("{e:#}"));
+                let _ = sender.send(WorkerEvent::AddonPanelSubmitted(generation, result));
+            });
+            c.start_pump();
+        });
         self.refresh_addon_settings(-1);
         let weak = Rc::downgrade(self);
         ui.on_addon_select(move |index| {
@@ -391,6 +468,50 @@ impl Controller {
             *self.addon_form.borrow_mut() = None;
         }
         ui.set_addon_fields(ModelRc::new(VecModel::from(rows)));
+    }
+    fn show_addon_panel(&self, panel: addons::Panel) {
+        let Some(ui) = self.ui.upgrade() else {
+            return;
+        };
+        let rows: Vec<_> = panel
+            .fields
+            .iter()
+            .map(|field| AddonPanelRow {
+                key: field.key.as_str().into(),
+                label: field.label.as_str().into(),
+                kind: match field.kind.as_str() {
+                    "choice" => 1,
+                    "output" => 2,
+                    "line" => 3,
+                    _ => 0,
+                },
+                value: field.value.as_str().into(),
+                options: ModelRc::new(VecModel::from(
+                    field
+                        .options
+                        .iter()
+                        .map(|s| s.as_str().into())
+                        .collect::<Vec<slint::SharedString>>(),
+                )),
+                option_index: field
+                    .options
+                    .iter()
+                    .position(|o| o == &field.value)
+                    .unwrap_or(0) as i32,
+            })
+            .collect();
+        ui.set_addon_panel_title(panel.title.as_str().into());
+        let has_focus_field = !panel.focus.is_empty();
+        ui.set_addon_panel_focus(panel.focus.as_str().into());
+        ui.set_addon_panel_submit_label(panel.submit.as_str().into());
+        ui.set_addon_panel_open(true);
+        ui.set_addon_panel_fields(ModelRc::new(VecModel::from(rows)));
+        if let Some((_, current)) = self.addon_panel.borrow_mut().as_mut() {
+            *current = panel;
+        }
+        if !has_focus_field {
+            ui.invoke_focus_search();
+        }
     }
     fn search_addons(self: &Rc<Self>, query: &str) {
         let Some(ui) = self.ui.upgrade() else {
@@ -779,10 +900,15 @@ impl Controller {
                     ui.set_launching(true);
                     ui.set_error_message("".into());
                     let sender = self.sender.clone();
+                    let generation = self.addon_revision.load(Ordering::Relaxed);
                     std::thread::spawn(move || {
                         let result = addons::activate(&addon, &manifest, &query, &item.id)
                             .map_err(|error| format!("插件执行失败：{error:#}"));
-                        let _ = sender.send(WorkerEvent::AddonActivated(result));
+                        let _ = sender.send(WorkerEvent::AddonActivated(
+                            generation,
+                            (addon, manifest, query, item.id),
+                            result,
+                        ));
                     });
                     self.start_pump();
                 }
@@ -871,10 +997,22 @@ impl Controller {
                             }
                         }
                         WorkerEvent::AddonSearch(_, _) => {}
-                        WorkerEvent::AddonActivated(result) => {
+                        WorkerEvent::AddonActivated(generation, context, result) => {
                             ui.set_launching(false);
+                            if generation != controller.addon_revision.load(Ordering::Relaxed) {
+                                continue;
+                            }
                             match result {
-                                Ok((message, keep_open)) => {
+                                Ok((message, _keep_open, Some(panel))) => {
+                                    if !message.is_empty() {
+                                        ui.set_notice(message.into());
+                                    }
+                                    *controller.addon_panel.borrow_mut() =
+                                        Some((context, panel.clone()));
+                                    ui.set_addon_panel_message("".into());
+                                    controller.show_addon_panel(panel);
+                                }
+                                Ok((message, keep_open, None)) => {
                                     if !message.is_empty() {
                                         ui.set_notice(message.into());
                                     }
@@ -883,6 +1021,19 @@ impl Controller {
                                     }
                                 }
                                 Err(error) => ui.set_error_message(error.into()),
+                            }
+                        }
+                        WorkerEvent::AddonPanelSubmitted(generation, result) => {
+                            if generation != controller.addon_revision.load(Ordering::Relaxed)
+                                || !ui.get_addon_panel_open()
+                            {
+                                continue;
+                            }
+                            ui.set_addon_panel_busy(false);
+                            match result {
+                                Ok(Some(panel)) => controller.show_addon_panel(panel),
+                                Ok(None) => {}
+                                Err(error) => ui.set_addon_panel_message(error.into()),
                             }
                         }
                         WorkerEvent::Launched(result) => {
@@ -901,7 +1052,11 @@ impl Controller {
                         }
                     }
                 }
-                if !ui.get_scanning() && !ui.get_launching() && !controller.addon_pending.get() {
+                if !ui.get_scanning()
+                    && !ui.get_launching()
+                    && !ui.get_addon_panel_busy()
+                    && !controller.addon_pending.get()
+                {
                     controller.timer.stop();
                 }
             },
@@ -1526,6 +1681,79 @@ mod tests {
         controller.files.suspend();
         controller.update_results("");
         assert_eq!(ui.get_results().row_data(0).unwrap().name, "ss");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn addon_panel_opens_submits_and_returns_to_launcher() {
+        if std::process::Command::new("python3")
+            .arg("--version")
+            .output()
+            .is_err()
+        {
+            return;
+        }
+        i_slint_backend_testing::init_no_event_loop();
+        let dir = file_search::test_support::TempDir::new();
+        let script = dir.0.join("panel.py");
+        std::fs::write(&script, r#"import json,sys
+r=json.load(sys.stdin)
+if r['action']=='search': print(json.dumps({'results':[{'id':'open','title':'Open'}]}))
+else:
+ v=r.get('values',{}).get('source',r.get('query',''))
+ print(json.dumps({'panel':{'title':'Test','submit':'Go','focus':'source','fields':[{'key':'source','label':'Input','type':'text','value':v},{'key':'result','label':'Result','type':'output','value':v.upper() if r['action']=='panel_submit' else ''}]}}))
+"#).unwrap();
+        let path = dir.0.join("manifest.json");
+        std::fs::write(&path, serde_json::to_vec(&serde_json::json!({"api_version":1,"id":"panel.test","name":"Panel","keyword":"panel","executable":"/usr/bin/env","args":["python3",script]})).unwrap()).unwrap();
+        let ui = LauncherWindow::new().unwrap();
+        ui.show().unwrap();
+        ui.set_scanning(false);
+        let controller = controller(&ui, &dir.0);
+        controller.bind_addons_with(Ok(settings::Settings::new(dir.0.clone())));
+        ui.invoke_addon_add(path.to_string_lossy().into_owned().into());
+        ui.set_query("panel hello".into());
+        controller.search_addons("panel hello");
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        let pump = || {
+            assert!(std::time::Instant::now() < deadline);
+            i_slint_backend_testing::mock_elapsed_time(Duration::from_millis(100));
+            slint::platform::update_timers_and_animations();
+            std::thread::sleep(Duration::from_millis(10));
+        };
+        while controller.addon_pending.get() {
+            pump();
+        }
+        controller.launch(0, false);
+        while ui.get_launching() {
+            pump();
+        }
+        assert!(ui.get_addon_panel_open());
+        assert_eq!(
+            ui.get_addon_panel_fields().row_data(0).unwrap().value,
+            "hello"
+        );
+        pump();
+        let key = |text: slint::SharedString| {
+            ui.window()
+                .dispatch_event(slint::platform::WindowEvent::KeyPressed { text: text.clone() });
+            ui.window()
+                .dispatch_event(slint::platform::WindowEvent::KeyReleased { text });
+        };
+        key("x".into());
+        key(slint::platform::Key::Return.into());
+        assert!(
+            ui.get_addon_panel_busy(),
+            "Enter should submit the focused input"
+        );
+        while ui.get_addon_panel_busy() {
+            pump();
+        }
+        assert_eq!(
+            ui.get_addon_panel_fields().row_data(1).unwrap().value,
+            "XHELLO"
+        );
+        ui.invoke_addon_panel_close();
+        assert!(!ui.get_addon_panel_open());
     }
 
     #[test]

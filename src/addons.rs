@@ -322,6 +322,86 @@ struct Request<'a> {
     query: &'a str,
     id: Option<&'a str>,
     config: &'a serde_json::Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    values: Option<&'a serde_json::Value>,
+}
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+pub struct Panel {
+    pub title: String,
+    pub submit: String,
+    #[serde(default)]
+    pub focus: String,
+    #[serde(default)]
+    pub fields: Vec<PanelField>,
+}
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+pub struct PanelField {
+    pub key: String,
+    pub label: String,
+    #[serde(rename = "type")]
+    pub kind: String,
+    #[serde(default)]
+    pub value: String,
+    #[serde(default)]
+    pub options: Vec<String>,
+}
+impl Panel {
+    fn validate(&self) -> Result<()> {
+        ensure!(
+            !self.title.trim().is_empty()
+                && self.title.len() <= 128
+                && !self.submit.trim().is_empty()
+                && self.submit.len() <= 128,
+            "插件面板标题或按钮无效"
+        );
+        ensure!(self.fields.len() <= 8, "插件面板字段过多");
+        let mut keys = std::collections::HashSet::new();
+        for field in &self.fields {
+            ensure!(
+                !field.key.is_empty()
+                    && field.key.len() <= 128
+                    && field
+                        .key
+                        .chars()
+                        .all(|c| c.is_ascii_alphanumeric() || "-_".contains(c))
+                    && keys.insert(&field.key),
+                "插件面板字段键无效"
+            );
+            ensure!(
+                !field.label.trim().is_empty()
+                    && field.label.len() <= 128
+                    && field.value.len() <= 8192,
+                "插件面板字段内容无效"
+            );
+            ensure!(
+                matches!(field.kind.as_str(), "text" | "line" | "choice" | "output"),
+                "不支持的插件面板字段类型"
+            );
+            ensure!(
+                field.options.len() <= 30
+                    && field
+                        .options
+                        .iter()
+                        .all(|o| !o.is_empty() && o.len() <= 128),
+                "插件面板选项无效"
+            );
+            ensure!(
+                if field.kind == "choice" {
+                    field.options.contains(&field.value)
+                } else {
+                    field.options.is_empty()
+                },
+                "插件面板选项或默认值无效"
+            );
+        }
+        ensure!(
+            self.focus.is_empty()
+                || self.fields.iter().any(|field| field.key == self.focus
+                    && matches!(field.kind.as_str(), "text" | "line")),
+            "插件面板焦点字段无效"
+        );
+        Ok(())
+    }
 }
 #[derive(Deserialize)]
 struct Response {
@@ -331,6 +411,8 @@ struct Response {
     message: String,
     #[serde(default)]
     keep_open: bool,
+    #[serde(default)]
+    panel: Option<Panel>,
 }
 
 fn invoke(
@@ -341,6 +423,7 @@ fn invoke(
     id: Option<&str>,
     revision: &AtomicU64,
     generation: u64,
+    values: Option<&serde_json::Value>,
 ) -> Result<Option<Response>> {
     let config = manifest.effective_config(&addon.config);
     let request = serde_json::to_vec(&Request {
@@ -349,6 +432,7 @@ fn invoke(
         query,
         id,
         config: &config,
+        values,
     })?;
     let mut command = Command::new(&manifest.executable);
     command
@@ -374,7 +458,8 @@ fn invoke(
         let result = stdout.take(MAX_OUTPUT + 1).read_to_end(&mut data);
         let _ = output_tx.send((result, data));
     });
-    let deadline = Instant::now() + Duration::from_secs(3);
+    let deadline =
+        Instant::now() + Duration::from_secs(if action == "panel_submit" { 20 } else { 3 });
     let mut status = None;
     let mut output = None;
     loop {
@@ -387,7 +472,7 @@ fn invoke(
             if cancelled {
                 return Ok(None);
             } else {
-                bail!("插件响应超时（3 秒）");
+                bail!("插件响应超时");
             }
         }
         if status.is_none() {
@@ -412,6 +497,9 @@ fn invoke(
     );
     for item in &response.results {
         validate_item(item)?;
+    }
+    if let Some(panel) = &response.panel {
+        panel.validate()?;
     }
     Ok(Some(response))
 }
@@ -439,7 +527,9 @@ pub fn search(
         })
         .cloned()
         .collect();
-    let Some(response) = invoke(addon, manifest, "search", query, None, revision, generation)?
+    let Some(response) = invoke(
+        addon, manifest, "search", query, None, revision, generation, None,
+    )?
     else {
         return Ok(None);
     };
@@ -452,7 +542,7 @@ pub fn activate(
     manifest: &Manifest,
     query: &str,
     id: &str,
-) -> Result<(String, bool)> {
+) -> Result<(String, bool, Option<Panel>)> {
     let response = invoke(
         addon,
         manifest,
@@ -461,9 +551,34 @@ pub fn activate(
         Some(id),
         &AtomicU64::new(0),
         0,
+        None,
     )?
     .context("插件调用已取消")?;
-    Ok((response.message, response.keep_open))
+    Ok((response.message, response.keep_open, response.panel))
+}
+pub fn submit_panel(
+    addon: &Addon,
+    manifest: &Manifest,
+    query: &str,
+    id: &str,
+    values: &serde_json::Value,
+    revision: &AtomicU64,
+    generation: u64,
+) -> Result<Option<Panel>> {
+    let response = invoke(
+        addon,
+        manifest,
+        "panel_submit",
+        query,
+        Some(id),
+        revision,
+        generation,
+        Some(values),
+    )?;
+    match response {
+        Some(response) => Ok(Some(response.panel.context("插件未返回面板")?)),
+        None => Ok(None),
+    }
 }
 pub fn revision() -> Arc<AtomicU64> {
     Arc::new(AtomicU64::new(0))
@@ -594,7 +709,7 @@ mod tests {
         assert_eq!(items[0].title, "早上好，世界");
         assert_eq!(
             activate(&addon, &manifest, "世界", "greet").unwrap(),
-            ("早上好，世界".into(), true)
+            ("早上好，世界".into(), true, None)
         );
         let items = search(&addon, &manifest, "", &revision, 1)
             .unwrap()

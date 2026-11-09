@@ -97,6 +97,10 @@ cargo run --release -- --no-hotkey
 
 插件接口版本为 1：清单包含 `api_version`（整数 1）、唯一 `id`、`name`、`keyword`、`executable`，可选 `args` 和 `commands`；相对程序路径基于清单目录，参数按原样传递，不通过 shell。命令项包含 `id`、`title`、可选 `detail`。进程每次接收一个 UTF-8 JSON 请求，读取标准输入直到 EOF，向标准输出写一个 JSON 对象并退出。`search` 请求包含 `api_version`、`action`、`query`、`id: null`、`config`，响应为 `{"results":[{"id":"...","title":"...","detail":"..."}]}`；插件声明的固定命令也会参与结果展示。执行结果时发送 `activate` 请求，`id` 为所选项目的 id；响应可包含 `message` 和 `keep_open`（默认为 false）。插件进程工作目录为清单所在目录，运行超时为 3 秒；搜索结果最多 30 项，输出最多 256 KiB。配置保存在设置目录的 `addons.json`。
 
+插件可以让宿主在同一窗口绘制表单：`activate` 响应中的 `panel` 对象包含 `title`、`submit`（按钮文字）和 `fields` 数组。每个字段包含唯一 `key`、`label`、`type` 和字符串 `value`；支持 `text`（多行输入，Enter 提交、Shift+Enter 换行）、`line`（单行输入，Enter 提交）、`choice`（需提供字符串 `options`，且 `value` 必须是其中一项）和 `output`（只读文本）。可用 `focus` 指定打开后获得焦点的输入字段 `key`。点击按钮或在输入框按 Enter 时插件收到 `panel_submit` 请求，其 `id` 和 `query` 与激活时相同，`values` 包含所有可编辑字段的字符串值；响应需要再次返回完整 `panel`。提交在后台执行，最长 20 秒；Esc 或「返回」退出面板。面板最多 8 个字段，每个值最多 8192 字节。原有只返回 `message` / `keep_open` 的插件无需更改。
+
+示例：`{"panel":{"title":"翻译","submit":"翻译","fields":[{"key":"source","label":"原文","type":"text","value":""},{"key":"result","label":"译文","type":"output","value":""}]}}`。
+
 插件可在清单中添加可选的 `settings` 数组，让应用生成设置表单；省略或留空时沿用 JSON 编辑器。每项包含唯一的 `key`（字母、数字、`-`、`_`）、显示名称 `label`、`type` 和类型匹配的 `default`，还可提供 `description`：
 
 ```json
