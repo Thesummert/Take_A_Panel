@@ -354,10 +354,10 @@ export component SettingsPanel inherits Rectangle {
                 HorizontalLayout {
                     spacing: 6px;
                     ComboBox { model: root.file-everything-available ? ["内置", "ripgrep (rg)", "fd", "Everything (es)"] : ["内置", "ripgrep (rg)", "fd"]; current-index <=> root.file-backend-draft; }
-                    LineEdit { text <=> root.file-backend-program; placeholder-text: "程序路径（留空使用 PATH）"; enabled: root.file-backend-draft != 0; }
+                    LineEdit { text <=> root.file-backend-program; placeholder-text: root.file-backend-draft == 3 ? "es.exe 路径（留空使用 PATH）" : "程序路径（留空使用 PATH）"; enabled: root.file-backend-draft != 0; }
                     Button { text: "保存后端"; enabled: !root.file-settings-busy && !root.file-folder-dialog-open; clicked => { root.save-file-backend(root.file-backend-draft, root.file-backend-program); } }
                 }
-                Text { text: root.file-backend-draft == 3 ? "Everything 使用自身索引；需运行 Everything 并安装 ES。" : "索引范围：每行一个目录，支持 ~/；留空停用索引。"; color: (AppTheme.light ? #626170 : #a2a5b3); font-size: 11px; wrap: word-wrap; }
+                Text { text: root.file-backend-draft == 3 ? "需运行 Everything 并单独安装 ES 命令行工具；程序路径请填写 es.exe。" : "索引范围：每行一个目录，支持 ~/；留空停用索引。"; color: (AppTheme.light ? #626170 : #a2a5b3); font-size: 11px; wrap: word-wrap; }
                 Button {
                     text: root.file-folder-dialog-open ? "正在选择文件夹…" : "添加文件夹…";
                     enabled: !root.file-settings-busy && !root.file-folder-dialog-open;

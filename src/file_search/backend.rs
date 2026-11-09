@@ -40,6 +40,36 @@ impl Kind {
     }
 }
 impl Backend {
+    pub fn everything_program(&self) -> Result<PathBuf> {
+        let program = PathBuf::from(self.program());
+        let name = program
+            .file_stem()
+            .and_then(|name| name.to_str())
+            .unwrap_or("");
+        if name.eq_ignore_ascii_case("everything")
+            || name.eq_ignore_ascii_case("everything64")
+            || name.eq_ignore_ascii_case("everything-1.5a")
+        {
+            // The GUI executable accepts different switches and may open its
+            // command help dialog. Never send ES arguments to it.
+            let sibling = program.with_file_name("es.exe");
+            if sibling.is_file() {
+                return Ok(sibling);
+            }
+            if let Some(es) = std::env::var_os("PATH").and_then(|paths| {
+                std::env::split_paths(&paths)
+                    .map(|path| path.join("es.exe"))
+                    .find(|path| path.is_file())
+            }) {
+                return Ok(es);
+            }
+            bail!(
+                "当前路径是 Everything 主程序；请单独安装 ES 命令行工具，并填写 es.exe 路径（不能填写 Everything.exe）"
+            );
+        }
+        Ok(program)
+    }
+
     pub fn program(&self) -> &str {
         if !self.executable.trim().is_empty() {
             return self.executable.trim();
@@ -237,13 +267,11 @@ pub fn everything(
     revision: &AtomicU64,
     generation: u64,
 ) -> Result<Option<Index>> {
-    let mut command = Command::new(backend.program());
-    command.args([
-        "-n", "200", "-txt", "-cp", "65001", "-timeout", "1000", "--",
-    ]);
-    if !query.trim().is_empty() {
-        command.arg(query);
-    }
+    let mut command = Command::new(backend.everything_program()?);
+    // TXT output redirected to a pipe is UTF-8.
+    // -search consumes the query as a value, including leading switches.
+    command.args(["-n", "200", "-txt", "-timeout", "1000", "-search"]);
+    command.arg(query);
     let mut index = Index::default();
     let complete = run(command, b'\n', false, revision, generation, |bytes| {
         let path = path_from_bytes(bytes);
@@ -260,6 +288,52 @@ pub fn everything(
 mod tests {
     use super::*;
     use crate::file_search::test_support::TempDir;
+
+    #[test]
+    fn everything_gui_path_uses_sibling_cli_instead() {
+        let root = TempDir::new();
+        let gui = root.0.join("Everything.exe");
+        let cli = root.0.join("es.exe");
+        std::fs::write(&gui, "must never be launched").unwrap();
+        std::fs::write(&cli, "cli").unwrap();
+        let backend = Backend {
+            kind: Kind::Everything,
+            executable: gui.to_string_lossy().into_owned(),
+        };
+        assert_eq!(backend.everything_program().unwrap(), cli);
+        std::fs::remove_file(&cli).unwrap();
+        // A PATH fallback is allowed, but the GUI must never be selected.
+        if let Ok(resolved) = backend.everything_program() {
+            assert_ne!(resolved, gui);
+            assert_eq!(resolved.file_name().unwrap(), "es.exe");
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "requires a running Everything and TAKE_A_PANEL_TEST_ES pointing to es.exe"]
+    fn everything_live_queries() {
+        let backend = Backend {
+            kind: Kind::Everything,
+            executable: std::env::var("TAKE_A_PANEL_TEST_ES").unwrap(),
+        };
+        let revision = AtomicU64::new(1);
+        for query in ["", "Everything.exe", "ext:exe \"Everything\"", "-help"] {
+            let index = everything(&backend, query, &revision, 1).unwrap().unwrap();
+            assert!(index.entries.len() <= MAX_RESULTS);
+            assert!(index.entries.iter().all(|entry| entry.path.is_absolute()));
+            if query != "-help" {
+                assert!(!index.entries.is_empty(), "no results for {query:?}");
+            } else {
+                assert!(
+                    index
+                        .entries
+                        .iter()
+                        .all(|entry| entry.path_lower.contains("-help"))
+                );
+            }
+        }
+    }
 
     #[test]
     fn external_indexers_handle_files_and_empty_roots() {
@@ -326,7 +400,7 @@ mod tests {
         let file = root.0.join("报告.txt");
         std::fs::write(&file, "data").unwrap();
         let script = root.0.join("es");
-        std::fs::write(&script, format!("#!/bin/sh\n[ \"$8\" = '--' ] || exit 3\n[ \"$9\" = '-foo bar' ] || exit 4\nprintf '%s\\n' '{}'\n", file.display())).unwrap();
+        std::fs::write(&script, format!("#!/bin/sh\n[ \"$6\" = '-search' ] || exit 3\n[ \"$7\" = '-foo bar' ] || exit 4\nprintf '%s\\n' '{}'\n", file.display())).unwrap();
         std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
         let backend = Backend {
             kind: Kind::Everything,

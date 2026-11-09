@@ -298,6 +298,9 @@ impl Controller {
                 !backend.executable.contains(['\n', '\r', '\0']),
                 "程序路径无效"
             );
+            if backend.kind == Kind::Everything {
+                backend.everything_program()?;
+            }
             let directory = self
                 .settings_directory
                 .clone()

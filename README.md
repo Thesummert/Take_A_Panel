@@ -123,7 +123,7 @@ cargo run --release -- --no-hotkey
 
 文件搜索默认使用内置索引。在 **设置 → 文件搜索** 可切换到 `ripgrep (rg)`、`fd`，Windows 上还可选择 `Everything (es)`；选择后点击“保存后端”。外部程序需自行安装并加入 PATH，也可以填写可执行文件完整路径。rg 和 fd 使用下方保存的索引范围，仍由应用在后台建立索引、按原有规则排序和查询；rg 只列出文件及索引根目录，fd 也列出子目录。二者遵循各自的忽略规则，不跟随目录符号链接。切换后端或重建索引可能需要等待，失败会在界面显示。
 
-Everything 后端需要 Windows 上运行 Everything 并单独安装 [ES 命令行工具](https://www.voidtools.com/support/everything/command_line_interface/)。它直接查询 Everything 的索引，不使用下方的索引范围或应用的索引缓存；支持 Everything 搜索语法，每次最多显示 200 项。Ctrl + R 重新查询。后端与程序路径保存在设置目录的 `file-search-backend.json`。
+Everything 后端需要 Windows 上运行 Everything 并单独安装 [ES 命令行工具](https://www.voidtools.com/support/everything/command_line_interface/)。程序路径应填写 `es.exe` 的完整路径，或将 ES 加入 PATH 后留空；`Everything.exe` 是图形主程序，不能直接执行 ES 查询。若填写主程序路径，应用会尝试查找同目录或 PATH 中的 `es.exe`，找不到时提示安装 ES。它直接查询 Everything 的索引，不使用下方的索引范围或应用的索引缓存；支持 Everything 搜索语法，每次最多显示 200 项。Ctrl + R 重新查询。后端与程序路径保存在设置目录的 `file-search-backend.json`。
 
 首次使用时，打开 **设置 → 文件搜索**，点击 **“添加文件夹…”**，通过系统文件夹选择器选中目录并追加到索引范围，可以重复操作添加多个目录；取消选择会保留已有内容。也可以每行手动填写一个目录，例如 `~/Documents`、`~/Downloads`，最后点击“保存并重建索引”。支持 `~/` 展开，含空格的路径不需要引号；重复和重叠的目录会合并。目录必须存在，保存失败时保留原范围和索引。范围保存在设置目录的 `file-search-roots`；内置后端下次启动先加载磁盘缓存，再在后台刷新索引；首次默认不扫描任何目录，留空保存可清空并停用索引。
 
