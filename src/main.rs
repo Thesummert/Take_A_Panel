@@ -17,6 +17,7 @@ mod linux_file_picker;
 #[cfg(target_os = "macos")]
 mod macos_app;
 mod options;
+mod power;
 mod search;
 mod server;
 mod settings;
@@ -52,6 +53,7 @@ enum WorkerEvent {
     Icons(Vec<(usize, icons::IconData)>),
     ScanFinished,
     Launched(Result<launch_history::History, String>),
+    PowerExecuted(Result<(), String>),
     AddonSearch(u64, Result<Option<Vec<addons::Item>>, String>),
     AddonActivated(
         u64,
@@ -68,6 +70,7 @@ enum ResultTarget {
     App(usize),
     Files,
     Clipboard,
+    Power(power::Action),
     Addon(usize),
 }
 
@@ -707,6 +710,9 @@ impl Controller {
         if query.trim().eq_ignore_ascii_case("clp") {
             matches.insert(0, ResultTarget::Clipboard);
         }
+        if let Some(action) = power::Action::from_query(query) {
+            matches.insert(0, ResultTarget::Power(action));
+        }
         let calculation = calculator::evaluate(query);
         if calculation.is_some() {
             matches.insert(0, ResultTarget::Calculation);
@@ -744,6 +750,15 @@ impl Controller {
                         };
                     }
                     ResultTarget::Addon(_) => unreachable!(),
+                    ResultTarget::Power(action) => {
+                        return AppRow {
+                            name: action.title().into(),
+                            detail: format!("按 Enter {}", action.title()).into(),
+                            monogram: "⏻".into(),
+                            tint: slint::Color::from_rgb_u8(220, 159, 184),
+                            ..Default::default()
+                        };
+                    }
                     ResultTarget::App(index) => index,
                 };
                 let app = &apps[index];
@@ -955,6 +970,19 @@ impl Controller {
                 ui.invoke_focus_search();
                 return;
             }
+            ResultTarget::Power(action) => {
+                ui.set_launching(true);
+                ui.set_error_message("".into());
+                let sender = self.sender.clone();
+                std::thread::spawn(move || {
+                    let result = action
+                        .execute()
+                        .map_err(|error| format!("无法{}：{error:#}", action.title()));
+                    let _ = sender.send(WorkerEvent::PowerExecuted(result));
+                });
+                self.start_pump();
+                return;
+            }
             ResultTarget::Addon(index) => {
                 let item = self.addon_items.borrow().get(index).cloned();
                 let context = self.addon_context.borrow().clone();
@@ -1137,6 +1165,18 @@ impl Controller {
                                 Ok(Some(panel)) => controller.show_addon_panel(panel),
                                 Ok(None) => {}
                                 Err(error) => ui.set_addon_panel_message(error.into()),
+                            }
+                        }
+                        WorkerEvent::PowerExecuted(result) => {
+                            ui.set_launching(false);
+                            match result {
+                                Ok(()) => {
+                                    let _ = ui.hide();
+                                }
+                                Err(error) => {
+                                    present(&ui, false, &controller.focus);
+                                    ui.set_error_message(error.into());
+                                }
                             }
                         }
                         WorkerEvent::Launched(result) => {
@@ -1939,6 +1979,42 @@ else:
         }
         ui.invoke_addon_panel_close();
         assert!(!ui.get_addon_panel_open());
+    }
+
+    #[test]
+    fn power_commands_take_priority_over_apps_without_running_on_search() {
+        i_slint_backend_testing::init_no_event_loop();
+        let dir = file_search::test_support::TempDir::new();
+        let ui = LauncherWindow::new().unwrap();
+        let controller = controller(&ui, &dir.0);
+        for (query, action) in [
+            (" SHUTDOWN ", power::Action::Shutdown),
+            ("Restart", power::Action::Restart),
+        ] {
+            *controller.apps.borrow_mut() = vec![apps::Application {
+                name: query.trim().into(),
+                detail: String::new(),
+                keywords: String::new(),
+                icon_name: None,
+                target: apps::LaunchTarget::File("/unused".into()),
+            }];
+            controller.update_results(query);
+            assert_eq!(controller.rows.row_data(0).unwrap().name, action.title());
+            assert!(controller.matches.borrow()[0] == ResultTarget::Power(action));
+            assert!(controller.matches.borrow()[1] == ResultTarget::App(0));
+            let row = controller.rows.row_data(0).unwrap();
+            assert!(!row.app_result && !row.has_path && !row.addon_result);
+            assert!(!ui.get_launching());
+            assert!(controller.receiver.try_recv().is_err());
+        }
+        controller.update_results("");
+        assert!(
+            controller
+                .matches
+                .borrow()
+                .iter()
+                .all(|target| matches!(target, ResultTarget::App(_)))
+        );
     }
 
     #[test]

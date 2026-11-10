@@ -87,6 +87,8 @@ cargo run --release -- --no-hotkey
 
 直接输入计算式（如 `1+2*3`、`(10-2)/4`、`2^10`），第一项会显示运算结果，按 **Enter** 或点击该项复制纯结果到剪贴板并隐藏面板。支持加减乘除、乘方、括号、小数、科学计数法，以及 `×` / `÷` / `−` 和中文括号；可在算式末尾加 `=`。无效算式或除零时不显示计算项。计算采用浮点数，显示最多 15 位有效数字。
 
+快速功能：输入 `shutdown` 显示“关机”，输入 `restart` 显示“重启系统”，按 **Enter** 或点击对应结果执行。命令忽略大小写及首尾空格，仅完整匹配时显示在首位。Windows 调用 `shutdown.exe`，macOS 通过 System Events 请求关机或重启，Linux 调用 `systemctl poweroff/reboot`（需要 systemd 及相应系统权限）；执行失败时在面板显示错误。
+
 `Shift + Enter` 在 macOS 上使用 `open -n -a` 请求新实例。Windows、Linux 会再次发起系统启动请求；应用是否允许多个实例或新窗口取决于应用自身。
 
 搜索结果显示应用图标：macOS 使用系统 Workspace 接口，Windows 使用 Shell 图标接口（含 Store 应用），Linux 根据 `.desktop` 的 `Icon` 字段解析绝对路径或图标主题中的 PNG / SVG 等文件。读取失败时回退到名称首字标识。
