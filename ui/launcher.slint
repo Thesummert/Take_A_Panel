@@ -625,6 +625,8 @@ export component LauncherWindow inherits Window {
                         VerticalLayout {
                             spacing: 6px;
                             for field[index] in root.addon-panel-fields: VerticalLayout {
+                                vertical-stretch: 0;
+                                alignment: start;
                                 spacing: 4px;
                                 Text { text: field.label; color: (AppTheme.light ? #292735 : #e7e7ef); font-size: 12px; }
                                 if field.kind == 0: TextEdit {
@@ -652,6 +654,16 @@ export component LauncherWindow inherits Window {
                                 if field.kind == 1: ComboBox {
                                     model: field.options; current-index: field.option-index; enabled: !root.addon-panel-busy;
                                     selected(value) => { root.addon-panel-edited(index, value); }
+                                }
+                                if field.kind == 4: VerticalLayout {
+                                    alignment: start;
+                                    spacing: 4px;
+                                    Text { text: field.value; visible: field.value != ""; color: (AppTheme.light ? #605c70 : #aba8b9); wrap: word-wrap; }
+                                    for suggestion in field.options: Button {
+                                        text: suggestion;
+                                        enabled: !root.addon-panel-busy;
+                                        clicked => { root.addon-panel-edited(index, suggestion); root.addon-panel-submit(); }
+                                    }
                                 }
                                 if field.kind == 2: TextEdit { height: 90px; text: field.value; read-only: true; }
                             }

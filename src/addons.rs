@@ -327,6 +327,8 @@ struct Request<'a> {
 }
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 pub struct Panel {
+    #[serde(default)]
+    pub live: bool,
     pub title: String,
     pub submit: String,
     #[serde(default)]
@@ -374,7 +376,10 @@ impl Panel {
                 "插件面板字段内容无效"
             );
             ensure!(
-                matches!(field.kind.as_str(), "text" | "line" | "choice" | "output"),
+                matches!(
+                    field.kind.as_str(),
+                    "text" | "line" | "choice" | "output" | "suggestions"
+                ),
                 "不支持的插件面板字段类型"
             );
             ensure!(
@@ -389,7 +394,7 @@ impl Panel {
                 if field.kind == "choice" {
                     field.options.contains(&field.value)
                 } else {
-                    field.options.is_empty()
+                    field.kind == "suggestions" || field.options.is_empty()
                 },
                 "插件面板选项或默认值无效"
             );
@@ -580,6 +585,27 @@ pub fn submit_panel(
         None => Ok(None),
     }
 }
+pub fn change_panel(
+    addon: &Addon,
+    manifest: &Manifest,
+    query: &str,
+    id: &str,
+    values: &serde_json::Value,
+    revision: &AtomicU64,
+    generation: u64,
+) -> Result<Option<Panel>> {
+    Ok(invoke(
+        addon,
+        manifest,
+        "panel_change",
+        query,
+        Some(id),
+        revision,
+        generation,
+        Some(values),
+    )?
+    .and_then(|r| r.panel))
+}
 pub fn revision() -> Arc<AtomicU64> {
     Arc::new(AtomicU64::new(0))
 }
@@ -588,6 +614,19 @@ pub fn revision() -> Arc<AtomicU64> {
 mod tests {
     use super::*;
     use crate::file_search::test_support::TempDir;
+
+    #[test]
+    fn live_suggestions_panel_schema() {
+        let mut panel: Panel = serde_json::from_value(serde_json::json!({
+            "title":"Search", "submit":"Go", "focus":"q", "live":true,
+            "fields":[{"key":"q","label":"Query","type":"line"},
+                {"key":"suggestion","label":"Suggestions","type":"suggestions","options":["rust","rust book"]}]
+        })).unwrap();
+        assert!(panel.live);
+        panel.validate().unwrap();
+        panel.fields[1].options.push("x".repeat(129));
+        assert!(panel.validate().is_err());
+    }
 
     #[test]
     fn manifest_registry_and_settings_round_trip() {
