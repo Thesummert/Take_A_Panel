@@ -11,6 +11,7 @@ mod backend;
 mod controller;
 mod folder_picker;
 mod program_picker;
+mod reveal;
 pub use controller::Controller;
 pub use folder_picker::bind as bind_folder_picker;
 pub use program_picker::bind as bind_program_picker;

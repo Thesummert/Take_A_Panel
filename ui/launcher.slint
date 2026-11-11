@@ -161,6 +161,7 @@ export component LauncherWindow inherits Window {
     in property <bool> file-program-dialog-open;
     callback rebuild-file-index();
     callback clear-file-index();
+    callback reveal-file-result(int);
     in property <[AppRow]> results;
     in property <int> total-count;
     in property <bool> scanning: true;
@@ -176,6 +177,7 @@ export component LauncherWindow inherits Window {
     property <int> context-index: -1;
     property <bool> context-app: false;
     property <bool> context-path: false;
+    property <length> context-menu-width: root.file-search-mode ? 264px : 196px;
     property <bool> addon-selected-result: !root.file-search-mode && !root.clipboard-mode
         && root.selected-index >= 0 && root.selected-index < root.results.length
         && root.results[root.selected-index].addon-result;
@@ -361,6 +363,11 @@ export component LauncherWindow inherits Window {
                                 else { root.dismiss(); }
                                 return accept;
                             }
+                            if (root.file-search-mode && event.text == Key.Return && event.modifiers.control) {
+                                root.context-open = false;
+                                root.reveal-file-result(root.selected-index);
+                                return accept;
+                            }
                             if (event.text == Key.Return && event.modifiers.shift) {
                                 root.launch-selected(root.selected-index, true);
                                 return accept;
@@ -492,7 +499,7 @@ export component LauncherWindow inherits Window {
                                     root.context-index = index;
                                     root.context-app = app.app-result && !root.file-search-mode && !root.clipboard-mode;
                                     root.context-path = root.file-search-mode || (root.context-app && app.has-path);
-                                    root.context-x = min(max(0px, self.absolute-position.x + self.mouse-x - 12px), parent.width - 196px);
+                                    root.context-x = min(max(0px, self.absolute-position.x + self.mouse-x - 12px), parent.width - root.context-menu-width);
                                     root.context-y = min(max(0px, self.absolute-position.y + self.mouse-y - 12px), root.height - 220px);
                                     root.context-open = true;
                                 }
@@ -543,6 +550,8 @@ export component LauncherWindow inherits Window {
                     Rectangle { width: 6px; }
                     if !root.file-search-mode && !root.clipboard-mode && !root.calculation-selected && !root.addon-selected-result: KeyCap { label: "Shift + Enter"; }
                     if !root.file-search-mode && !root.clipboard-mode && !root.calculation-selected && !root.addon-selected-result: Text { text: "新开"; font-size: 11px; color: (AppTheme.light ? #696777 : #7d8090); vertical-alignment: center; }
+                    if root.file-search-mode: KeyCap { label: "Ctrl + Enter"; }
+                    if root.file-search-mode: Text { text: "打开位置"; font-size: 11px; color: (AppTheme.light ? #696777 : #7d8090); vertical-alignment: center; }
                     Rectangle { horizontal-stretch: 1; }
                     Text {
                         text: root.clipboard-mode ? "最多保存 100 条记录" : root.file-search-mode ? (root.file-backend-active == 3 ? root.file-count + " 项结果" : root.file-count + " 项已索引") : (root.scanning ? "扫描中" : root.total-count + " 个应用已就绪");
@@ -569,7 +578,7 @@ export component LauncherWindow inherits Window {
             TouchArea { clicked => { root.context-open = false; root.focus-search(); } }
             Rectangle {
                 x: root.context-x; y: root.context-y;
-                width: 196px;
+                width: root.context-menu-width;
                 height: menu.preferred-height + 12px;
                 background: (AppTheme.light ? #ffffff : #24232d);
                 border-color: (AppTheme.light ? #c9c5d2 : #494251); border-width: 1px; border-radius: 10px;
@@ -583,6 +592,10 @@ export component LauncherWindow inherits Window {
                     if root.context-app: ContextItem {
                         label: "新开实例"; shortcut: "Shift + Enter";
                         activated => { root.context-open = false; root.launch-selected(root.context-index, true); }
+                    }
+                    if root.file-search-mode: ContextItem {
+                        label: "在资源管理器中打开"; shortcut: "Ctrl + Enter";
+                        activated => { root.context-open = false; root.reveal-file-result(root.context-index); }
                     }
                     if root.context-path: ContextItem {
                         label: "复制路径";

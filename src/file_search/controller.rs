@@ -214,6 +214,17 @@ impl Controller {
             }
         });
         let weak = Rc::downgrade(&controller);
+        ui.on_reveal_file_result(move |row| {
+            if let Some(controller) = weak.upgrade()
+                && controller
+                    .ui
+                    .upgrade()
+                    .is_some_and(|ui| ui.get_file_search_mode())
+            {
+                controller.open_result(row, true);
+            }
+        });
+        let weak = Rc::downgrade(&controller);
         controller.refresh_timer.start(
             slint::TimerMode::Repeated,
             Duration::from_secs(30 * 60),
@@ -492,6 +503,10 @@ impl Controller {
     }
 
     pub fn open(self: &Rc<Self>, row: i32) {
+        self.open_result(row, false);
+    }
+
+    fn open_result(self: &Rc<Self>, row: i32, reveal: bool) {
         let Some(ui) = self.ui.upgrade() else {
             return;
         };
@@ -508,7 +523,12 @@ impl Controller {
         let _ = ui.hide();
         let sender = self.sender.clone();
         std::thread::spawn(move || {
-            let _ = sender.send(Event::Opened(super::open(&path)));
+            let result = if reveal {
+                super::reveal::reveal(&path)
+            } else {
+                super::open(&path)
+            };
+            let _ = sender.send(Event::Opened(result));
         });
         self.start_pump();
     }

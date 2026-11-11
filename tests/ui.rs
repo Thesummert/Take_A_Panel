@@ -78,6 +78,34 @@ fn right_click_selects_result_and_menu_runs_its_action() {
     // The third menu item copies the path of the right-clicked row.
     click(&ui, 120., 330.);
     assert_eq!(action.get(), 1);
+    // File results reveal the right-clicked row, without opening the file.
+    ui.set_file_search_mode(true);
+    let revealed = Rc::new(Cell::new(-1));
+    let result = revealed.clone();
+    ui.on_reveal_file_result(move |index| result.set(index));
+    ui.window().dispatch_event(WindowEvent::PointerPressed {
+        position,
+        button: PointerEventButton::Right,
+    });
+    ui.window().dispatch_event(WindowEvent::PointerReleased {
+        position,
+        button: PointerEventButton::Right,
+    });
+    click(&ui, 120., 295.);
+    assert_eq!(revealed.get(), 1);
+    assert_eq!(launches.get(), 0);
+    revealed.set(-1);
+    ui.invoke_focus_search();
+    ui.set_selected_index(0);
+    ui.window().dispatch_event(WindowEvent::KeyPressed {
+        text: Key::Control.into(),
+    });
+    key(&ui, Key::Return.into());
+    ui.window().dispatch_event(WindowEvent::KeyReleased {
+        text: Key::Control.into(),
+    });
+    assert_eq!(revealed.get(), 0);
+    assert_eq!(launches.get(), 0);
     ui.hide().unwrap();
 }
 
