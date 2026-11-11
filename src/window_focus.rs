@@ -1,5 +1,16 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 
+#[cfg(target_os = "linux")]
+pub fn prepare_for_show(window: &slint::Window) {
+    if !window.is_visible() {
+        // Slint destroys Wayland windows on hide, so Focused(false) can be
+        // lost (including when we hide inside the native focus-event hook).
+        // Clear the old activation before showing a new native window. Its
+        // Focused(true) must reach the text input again to re-enable IME.
+        window.dispatch_event(slint::platform::WindowEvent::WindowActiveChanged(false));
+    }
+}
+
 /// Native windows can report Focused(false) before ever receiving focus.
 /// Only a focused -> unfocused transition during this presentation dismisses
 /// the panel. Reset this state every time the panel is shown.

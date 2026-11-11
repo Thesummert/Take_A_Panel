@@ -1264,6 +1264,8 @@ fn bind_window_size(ui: &LauncherWindow) {
 
 fn present(ui: &LauncherWindow, reset: bool, focus: &WindowFocus) {
     let was_visible = ui.window().is_visible();
+    #[cfg(target_os = "linux")]
+    window_focus::prepare_for_show(ui.window());
     focus.begin_presentation();
     if reset {
         ui.invoke_reset_search();

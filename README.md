@@ -158,6 +158,8 @@ Wayland、`--no-hotkey` 或快捷键注册失败时，仍可从 P 菜单或命�
 
 Wayland 可在桌面的自定义快捷键设置中绑定 `take-a-panel --toggle`，由桌面环境接收快捷键并调用已有 server。
 
+Wayland 输入法使用原生 `text-input-v3` 协议；在 Niri 等桌面中需启动并配置好 Fcitx5 等输入法。面板隐藏后再次唤出会重新同步输入焦点并启用输入法。可运行 `cargo run --example wayland_ime_check` 检查首次显示和连续两次隐藏、唤出后的输入法启用状态；测试期间保持测试窗口获得焦点，约两秒后自动退出。
+
 Linux 下窗口的 Wayland `app_id` 和 X11 窗口类均为 `com.takeapanel.launcher`。X11 窗口声明为对话框，支持该提示的平铺式窗口管理器会将其悬浮显示；Wayland 是否悬浮由合成器决定。以 Sway 为例，可在配置文件中添加以下规则后重新加载配置：
 
 ```text
