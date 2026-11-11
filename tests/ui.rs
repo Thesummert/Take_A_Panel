@@ -31,6 +31,35 @@ fn click(ui: &LauncherWindow, x: f32, y: f32) {
 }
 
 #[test]
+fn automatic_refresh_page_saves_both_intervals_without_launching_results() {
+    slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+        i_slint_backend_testing::TestingBackendOptions {
+            renderer_name: Some("software".into()),
+            ..Default::default()
+        },
+    )))
+    .unwrap();
+    let ui = LauncherWindow::new().unwrap();
+    let saved = Rc::new(std::cell::RefCell::new(None));
+    let result = saved.clone();
+    ui.on_save_refresh_intervals(move |apps, files| {
+        *result.borrow_mut() = Some((apps.to_string(), files.to_string()));
+    });
+    let launches = Rc::new(Cell::new(0));
+    let calls = launches.clone();
+    ui.on_launch_selected(move |_, _| calls.set(calls.get() + 1));
+    ui.show().unwrap();
+    ui.invoke_open_settings();
+    click(&ui, 80., 410.);
+    ui.set_app_refresh_draft("15".into());
+    ui.set_file_refresh_draft("0".into());
+    click(&ui, 550., 345.);
+    assert_eq!(*saved.borrow(), Some(("15".into(), "0".into())));
+    assert_eq!(launches.get(), 0);
+    ui.hide().unwrap();
+}
+
+#[test]
 fn right_click_selects_result_and_menu_runs_its_action() {
     slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
         i_slint_backend_testing::TestingBackendOptions {

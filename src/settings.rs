@@ -56,9 +56,75 @@ pub struct Settings {
     directory: PathBuf,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct RefreshIntervals {
+    pub apps_minutes: u32,
+    pub files_minutes: u32,
+}
+
+impl Default for RefreshIntervals {
+    fn default() -> Self {
+        Self {
+            apps_minutes: 30,
+            files_minutes: 30,
+        }
+    }
+}
+
+impl RefreshIntervals {
+    pub fn parse(apps: &str, files: &str) -> Result<Self> {
+        let value = Self {
+            apps_minutes: apps
+                .trim()
+                .parse()
+                .context("应用列表刷新间隔须为 0–1440 的整数（分钟）")?,
+            files_minutes: files
+                .trim()
+                .parse()
+                .context("文件索引刷新间隔须为 0–1440 的整数（分钟）")?,
+        };
+        value.validate()?;
+        Ok(value)
+    }
+
+    fn validate(self) -> Result<()> {
+        anyhow::ensure!(
+            self.apps_minutes <= 1440,
+            "应用列表刷新间隔须为 0–1440 的整数（分钟）"
+        );
+        anyhow::ensure!(
+            self.files_minutes <= 1440,
+            "文件索引刷新间隔须为 0–1440 的整数（分钟）"
+        );
+        Ok(())
+    }
+}
+
 impl Settings {
     pub fn new(directory: PathBuf) -> Self {
         Self { directory }
+    }
+
+    pub fn load_refresh_intervals(&self) -> Result<RefreshIntervals> {
+        match std::fs::read_to_string(self.directory.join("refresh-intervals.json")) {
+            Ok(text) => {
+                let value: RefreshIntervals =
+                    serde_json::from_str(&text).context("自动刷新设置格式错误")?;
+                value.validate()?;
+                Ok(value)
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                Ok(RefreshIntervals::default())
+            }
+            Err(error) => Err(error).context("无法读取自动刷新设置"),
+        }
+    }
+
+    pub fn save_refresh_intervals(&self, value: RefreshIntervals) -> Result<()> {
+        value.validate()?;
+        self.save_text("refresh-intervals.json", &serde_json::to_string(&value)?)
+            .context("无法保存自动刷新设置")
     }
 
     pub fn load_theme(&self) -> Result<Option<i32>> {
@@ -207,6 +273,45 @@ pub fn parse_window_size(value: &str) -> Result<(u32, u32)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn refresh_intervals_defaults_round_trip_and_validation() {
+        let dir = crate::file_search::test_support::TempDir::new();
+        let settings = Settings::new(dir.0.clone());
+        assert_eq!(
+            settings.load_refresh_intervals().unwrap(),
+            RefreshIntervals::default()
+        );
+        let value = RefreshIntervals::parse(" 0 ", "1440").unwrap();
+        settings.save_refresh_intervals(value).unwrap();
+        assert_eq!(
+            Settings::new(dir.0.clone())
+                .load_refresh_intervals()
+                .unwrap(),
+            value
+        );
+        for text in ["", "-1", "1.5", "1441", "abc"] {
+            assert!(RefreshIntervals::parse(text, "30").is_err());
+            assert!(RefreshIntervals::parse("30", text).is_err());
+        }
+        assert!(
+            settings
+                .save_refresh_intervals(RefreshIntervals {
+                    apps_minutes: 1441,
+                    files_minutes: 30
+                })
+                .is_err()
+        );
+        assert_eq!(settings.load_refresh_intervals().unwrap(), value);
+        std::fs::write(dir.0.join("refresh-intervals.json"), "broken").unwrap();
+        assert!(settings.load_refresh_intervals().is_err());
+        std::fs::write(
+            dir.0.join("refresh-intervals.json"),
+            r#"{"files_minutes":1441}"#,
+        )
+        .unwrap();
+        assert!(settings.load_refresh_intervals().is_err());
+    }
 
     #[test]
     fn theme_round_trip_and_invalid_value() {

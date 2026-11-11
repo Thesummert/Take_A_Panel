@@ -103,6 +103,11 @@ export component SettingsPanel inherits Rectangle {
     in property <bool> file-program-dialog-open;
     callback rebuild-file-index();
     callback clear-file-index();
+    in-out property <string> app-refresh-draft;
+    in-out property <string> file-refresh-draft;
+    in property <bool> refresh-settings-failed;
+    in property <string> refresh-settings-message;
+    callback save-refresh-intervals(string, string);
     callback save(string);
     callback restore-default();
     callback close();
@@ -142,6 +147,7 @@ export component SettingsPanel inherits Rectangle {
                     SettingsNavItem { label: "窗口大小"; selected: root.page == 4; activated => { root.page = 4; root.focus-editor(); } }
                     SettingsNavItem { label: "文件搜索"; selected: root.page == 3; activated => { root.page = 3; root.focus-editor(); } }
                     SettingsNavItem { label: "插件"; selected: root.page == 5; activated => { root.page = 5; root.focus-editor(); } }
+                    SettingsNavItem { label: "自动刷新"; selected: root.page == 6; activated => { root.page = 6; root.focus-editor(); } }
                     Rectangle { vertical-stretch: 1; }
                     Button { text: "返回面板"; clicked => { root.close(); } }
                 }
@@ -347,6 +353,23 @@ export component SettingsPanel inherits Rectangle {
                     Button { text: "保存插件配置"; clicked => { root.addon-save-config(root.addon-selected, root.addon-config-draft); } }
                 }
                 Text { text: root.addon-message; color: root.addon-failed ? (AppTheme.light ? #a72e39 : #ef9b9b) : (AppTheme.light ? #217764 : #84c7b5); font-size: 11px; wrap: word-wrap; }
+                Rectangle { vertical-stretch: 1; }
+            }
+            if root.page == 6: VerticalLayout {
+                padding: 24px;
+                spacing: 12px;
+                Text { text: "自动刷新"; color: (AppTheme.light ? #211e2e : #f0eef8); font-size: 21px; font-weight: 600; }
+                Text { text: "后台定时更新应用列表和文件索引，面板隐藏时也会运行。"; color: (AppTheme.light ? #626170 : #a2a5b3); font-size: 12px; wrap: word-wrap; }
+                Text { text: "应用列表刷新间隔（分钟）"; color: (AppTheme.light ? #292735 : #e7e7ef); font-size: 13px; }
+                LineEdit { text <=> root.app-refresh-draft; placeholder-text: "默认 30"; }
+                Text { text: "文件索引刷新间隔（分钟）"; color: (AppTheme.light ? #292735 : #e7e7ef); font-size: 13px; }
+                LineEdit { text <=> root.file-refresh-draft; placeholder-text: "默认 30"; }
+                Text { text: "填写 1–1440 的整数，0 表示关闭对应的定时刷新。\n保存后重新计时；启动和手动刷新仍然可用。\n文件索引间隔适用于内置、rg、fd 后端；Everything 使用自身索引。"; color: (AppTheme.light ? #626170 : #a2a5b3); font-size: 11px; wrap: word-wrap; }
+                HorizontalLayout {
+                    Rectangle { horizontal-stretch: 1; }
+                    Button { text: "保存刷新间隔"; primary: true; clicked => { root.save-refresh-intervals(root.app-refresh-draft, root.file-refresh-draft); } }
+                }
+                Text { text: root.refresh-settings-message; color: root.refresh-settings-failed ? (AppTheme.light ? #a72e39 : #ef9b9b) : (AppTheme.light ? #217764 : #84c7b5); font-size: 11px; wrap: word-wrap; }
                 Rectangle { vertical-stretch: 1; }
             }
             if root.page == 3: VerticalLayout {

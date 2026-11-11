@@ -18,6 +18,7 @@ mod linux_file_picker;
 mod macos_app;
 mod options;
 mod power;
+mod refresh_settings;
 mod search;
 mod server;
 mod settings;
@@ -102,6 +103,7 @@ struct Controller {
     sender: mpsc::Sender<WorkerEvent>,
     receiver: mpsc::Receiver<WorkerEvent>,
     timer: slint::Timer,
+    app_refresh_timer: slint::Timer,
     hotkey_notice: RefCell<String>,
     scan_notice: RefCell<String>,
     focus: Arc<WindowFocus>,
@@ -128,6 +130,7 @@ impl Controller {
             let controller = Self::with_files(ui, hotkey_notice, focus, files, history);
             *controller.clipboard.borrow_mut() = clipboard::History::start();
             controller.bind_addons();
+            controller.bind_refresh_settings(settings::directory().map(settings::Settings::new));
             controller
         }
     }
@@ -163,6 +166,7 @@ impl Controller {
             sender,
             receiver,
             timer: slint::Timer::default(),
+            app_refresh_timer: slint::Timer::default(),
             hotkey_notice: RefCell::new(hotkey_notice),
             scan_notice: RefCell::new(String::new()),
             focus,
@@ -676,6 +680,7 @@ impl Controller {
                 .iter()
                 .position(|&app_index| app_index == ResultTarget::App(index))
                 && let Some(mut data) = self.rows.row_data(row)
+                && data.app_result
             {
                 data.icon = cached.clone();
                 data.has_icon = true;
@@ -840,6 +845,10 @@ impl Controller {
     }
 
     fn refresh(self: &Rc<Self>) {
+        self.refresh_apps(true);
+    }
+
+    fn refresh_apps(self: &Rc<Self>, clear_error: bool) {
         let Some(ui) = self.ui.upgrade() else {
             return;
         };
@@ -847,7 +856,9 @@ impl Controller {
             return;
         }
         ui.set_scanning(true);
-        ui.set_error_message("".into());
+        if clear_error {
+            ui.set_error_message("".into());
+        }
         let sender = self.sender.clone();
         std::thread::spawn(move || {
             let catalog = apps::discover();
@@ -1034,8 +1045,8 @@ impl Controller {
 
     fn start_pump(self: &Rc<Self>) {
         let weak = Rc::downgrade(self);
-        // Only poll while a worker is active. Hidden, idle launchers have no
-        // recurring timer; global hotkeys wake the native event loop directly.
+        // Only poll while a worker is active; automatic refresh uses separate,
+        // infrequent timers even while the launcher is hidden.
         self.timer.start(
             slint::TimerMode::Repeated,
             Duration::from_millis(60),
@@ -1712,6 +1723,90 @@ fn run_server(options: Options, mut server: server::Server) -> Result<()> {
 mod tests {
     use super::*;
 
+    #[test]
+    fn automatic_refresh_settings_apply_persist_and_preserve_previous_values_on_failure() {
+        i_slint_backend_testing::init_no_event_loop();
+        let dir = file_search::test_support::TempDir::new();
+        let ui = LauncherWindow::new().unwrap();
+        let controller = controller(&ui, &dir.0);
+        let store = settings::Settings::new(dir.0.clone());
+        controller.bind_refresh_settings(Ok(store.clone()));
+        assert_eq!(ui.get_app_refresh_draft(), "30");
+        assert_eq!(ui.get_file_refresh_draft(), "30");
+        assert_eq!(
+            controller.app_refresh_timer.interval(),
+            Duration::from_secs(1800)
+        );
+        ui.invoke_save_refresh_intervals("5".into(), "7".into());
+        assert!(!ui.get_refresh_settings_failed());
+        assert_eq!(
+            controller.app_refresh_timer.interval(),
+            Duration::from_secs(300)
+        );
+        assert_eq!(
+            store.load_refresh_intervals().unwrap(),
+            settings::RefreshIntervals {
+                apps_minutes: 5,
+                files_minutes: 7
+            }
+        );
+        ui.invoke_save_refresh_intervals("6".into(), "invalid".into());
+        assert!(ui.get_refresh_settings_failed());
+        assert_eq!(
+            controller.app_refresh_timer.interval(),
+            Duration::from_secs(300)
+        );
+        assert_eq!(store.load_refresh_intervals().unwrap().apps_minutes, 5);
+        let second = LauncherWindow::new().unwrap();
+        let reloaded = self::controller(&second, &dir.0);
+        reloaded.bind_refresh_settings(Ok(store));
+        assert_eq!(second.get_app_refresh_draft(), "5");
+        assert_eq!(second.get_file_refresh_draft(), "7");
+        let blocked = dir.0.join("not-a-directory");
+        std::fs::write(&blocked, "file").unwrap();
+        reloaded.bind_refresh_settings(Ok(settings::Settings::new(blocked)));
+        assert!(second.get_refresh_settings_failed());
+        assert_eq!(
+            reloaded.app_refresh_timer.interval(),
+            Duration::from_secs(1800)
+        );
+        second.invoke_save_refresh_intervals("1".into(), "1".into());
+        assert!(second.get_refresh_settings_failed());
+        assert_eq!(
+            reloaded.app_refresh_timer.interval(),
+            Duration::from_secs(1800)
+        );
+        ui.invoke_save_refresh_intervals("0".into(), "0".into());
+        assert!(!controller.app_refresh_timer.running());
+    }
+
+    #[test]
+    fn app_refresh_timer_runs_while_hidden_and_preserves_search_and_errors() {
+        i_slint_backend_testing::init_no_event_loop();
+        let dir = file_search::test_support::TempDir::new();
+        let ui = LauncherWindow::new().unwrap();
+        let controller = controller(&ui, &dir.0);
+        controller.bind_refresh_settings(Ok(settings::Settings::new(dir.0.clone())));
+        ui.invoke_save_refresh_intervals("0".into(), "0".into());
+        ui.set_scanning(false);
+        i_slint_backend_testing::mock_elapsed_time(Duration::from_secs(1800));
+        slint::platform::update_timers_and_animations();
+        assert!(!ui.get_scanning());
+        ui.invoke_save_refresh_intervals("1".into(), "0".into());
+        ui.set_query("正在搜索".into());
+        ui.set_file_search_mode(true);
+        ui.set_error_message("已有错误".into());
+        i_slint_backend_testing::mock_elapsed_time(Duration::from_secs(59));
+        slint::platform::update_timers_and_animations();
+        assert!(!ui.get_scanning());
+        i_slint_backend_testing::mock_elapsed_time(Duration::from_secs(1));
+        slint::platform::update_timers_and_animations();
+        assert!(ui.get_scanning());
+        assert!(ui.get_file_search_mode());
+        assert_eq!(ui.get_query(), "正在搜索");
+        assert_eq!(ui.get_error_message(), "已有错误");
+    }
+
     fn controller(ui: &LauncherWindow, settings: &std::path::Path) -> Rc<Controller> {
         let focus = Arc::default();
         let files =
@@ -2076,6 +2171,18 @@ else:
         assert_eq!(row.name, "Alpha");
         assert!(row.has_icon);
         assert_eq!(row.icon.to_rgba8().unwrap().as_bytes(), &[255, 0, 0, 255]);
+        // Clipboard rows share the model, but must never receive app icons
+        // arriving from a background catalog refresh.
+        controller.rows.set_vec(vec![AppRow {
+            name: "Clipboard text".into(),
+            ..Default::default()
+        }]);
+        controller.apply_icons(vec![(0, pixel(&[0, 255, 0, 255]))]);
+        assert!(!controller.rows.row_data(0).unwrap().has_icon);
+        assert_eq!(
+            controller.icons.borrow()[0].to_rgba8().unwrap().as_bytes(),
+            &[0, 255, 0, 255]
+        );
     }
 
     #[test]

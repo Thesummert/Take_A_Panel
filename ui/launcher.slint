@@ -161,6 +161,11 @@ export component LauncherWindow inherits Window {
     in property <bool> file-program-dialog-open;
     callback rebuild-file-index();
     callback clear-file-index();
+    in-out property <string> app-refresh-draft: "30";
+    in-out property <string> file-refresh-draft: "30";
+    in property <bool> refresh-settings-failed;
+    in property <string> refresh-settings-message;
+    callback save-refresh-intervals(string, string);
     callback reveal-file-result(int);
     in property <[AppRow]> results;
     in property <int> total-count;
@@ -689,6 +694,11 @@ export component LauncherWindow inherits Window {
         }
 
         settings-panel := SettingsPanel {
+            app-refresh-draft <=> root.app-refresh-draft;
+            file-refresh-draft <=> root.file-refresh-draft;
+            refresh-settings-failed: root.refresh-settings-failed;
+            refresh-settings-message: root.refresh-settings-message;
+            save-refresh-intervals(apps, files) => { root.save-refresh-intervals(apps, files); }
             x: 1px; y: 45px;
             width: parent.width - 2px; height: parent.height - 46px;
             visible: root.settings-open;

@@ -224,18 +224,26 @@ impl Controller {
                 controller.open_result(row, true);
             }
         });
-        let weak = Rc::downgrade(&controller);
-        controller.refresh_timer.start(
+        controller.set_refresh_interval(30);
+        controller.start_index(true, true);
+        controller
+    }
+
+    pub fn set_refresh_interval(self: &Rc<Self>, minutes: u32) {
+        self.refresh_timer.stop();
+        if minutes == 0 {
+            return;
+        }
+        let weak = Rc::downgrade(self);
+        self.refresh_timer.start(
             slint::TimerMode::Repeated,
-            Duration::from_secs(30 * 60),
+            Duration::from_secs(u64::from(minutes) * 60),
             move || {
                 if let Some(controller) = weak.upgrade() {
                     controller.refresh();
                 }
             },
         );
-        controller.start_index(true, true);
-        controller
     }
 
     pub fn enter(self: &Rc<Self>) {
@@ -852,6 +860,23 @@ mod tests {
             !ui.get_file_indexing() && !ui.get_file_querying()
         });
         assert_eq!(ui.get_file_count(), 3);
+        controller.set_refresh_interval(0);
+        std::fs::write(root.join("after-pause.txt"), "new").unwrap();
+        let before = controller.index_revision.load(Ordering::Relaxed);
+        i_slint_backend_testing::mock_elapsed_time(Duration::from_secs(31 * 60));
+        slint::platform::update_timers_and_animations();
+        assert_eq!(controller.index_revision.load(Ordering::Relaxed), before);
+        controller.set_refresh_interval(2);
+        i_slint_backend_testing::mock_elapsed_time(Duration::from_secs(119));
+        slint::platform::update_timers_and_animations();
+        assert_eq!(controller.index_revision.load(Ordering::Relaxed), before);
+        i_slint_backend_testing::mock_elapsed_time(Duration::from_secs(1));
+        slint::platform::update_timers_and_animations();
+        assert!(controller.index_revision.load(Ordering::Relaxed) > before);
+        wait(&controller, || {
+            !ui.get_file_indexing() && !ui.get_file_querying()
+        });
+        assert_eq!(ui.get_file_count(), 4);
         ui.invoke_save_file_roots("".into());
         wait(&controller, || !ui.get_file_settings_busy());
         assert!(!path.exists());

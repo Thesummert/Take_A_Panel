@@ -119,6 +119,12 @@ cargo run --release -- --no-hotkey
 
 仓库的 `examples/addon-demo` 是可运行示例：macOS / Linux 安装 Python 3 后添加该目录下的 `manifest.json`，输入 `hello`；Windows 可将清单中的 `executable` 改为 Python 可执行文件的绝对路径，`args` 改为 `["demo.py"]`。
 
+## 自动刷新
+
+应用列表和文件索引默认每 **30 分钟**在后台刷新，面板隐藏时也会运行。在 **设置 → 自动刷新** 中可分别修改两个间隔，单位为分钟，支持 **1–1440** 的整数；填写 **0** 可关闭对应的定时刷新。点击“保存刷新间隔”后立即生效并重新计时，重启后保留。扫描或索引任务尚未完成时会跳过本次定时刷新，避免重复扫描。关闭定时刷新后，启动、手动刷新和进入文件搜索时的刷新仍然可用。
+
+文件索引的定时刷新适用于内置、rg 和 fd 后端；Everything 使用自身索引。设置保存在设置目录下的 `refresh-intervals.json`。
+
 ## 文件搜索
 
 在搜索结果上右键选择 **“在资源管理器中打开”**，或选中结果后按 **Ctrl + Enter**，可打开其所在位置：Windows 资源管理器和 macOS Finder 会选中该文件或文件夹，Linux 会打开其父目录。普通 Enter / 单击仍按原方式打开文件或文件夹。
@@ -133,7 +139,7 @@ Everything 后端需要 Windows 上运行 Everything 并单独安装 [ES 命令�
 
 文件遍历使用 Rust 的 [ignore](https://github.com/BurntSushi/ripgrep/tree/master/crates/ignore) 库，遵循 `.gitignore`、`.ignore`、Git 全局忽略等规则（`.gitignore` 在非 Git 目录中也生效），跳过隐藏项，不跟随目录内的符号链接。只索引文件名和路径，不读取文件内容。无法访问的项目会跳过并在状态中提示；单次最多索引 250,000 项，达到上限会提示缩小范围。每次查询最多展示排名最高的 200 项，同时显示匹配总数。
 
-索引和查询在后台执行，快速更换关键词、索引范围或后端会取消旧任务，旧结果不会覆盖当前结果。内置、rg 和 fd 后端运行期间每 30 分钟以及进入文件搜索时会自动在后台刷新索引，刷新期间仍可使用已有结果。文件增删后，也可在文件搜索模式按 **Ctrl + R**、点击右下角刷新，或在设置中点击“重建索引”。设置中的“清空索引缓存”会取消当前索引任务并清除内存及磁盘索引，但保留已保存的目录；下次进入文件搜索或定时刷新时会重新建立。重建采用已保存的范围，尚未保存的编辑需点击“保存并重建索引”。当前未接入实时文件变更监听。索引缓存位于 macOS 的 `~/Library/Caches/TakeAPanel/file-index.json`、Windows 的 `%LOCALAPPDATA%/TakeAPanel/cache/file-index.json`，Linux 的 `$XDG_CACHE_HOME/take-a-panel/file-index.json`（默认 `~/.cache/take-a-panel/file-index.json`）；设置 `TAKE_A_PANEL_CONFIG_DIR` 时使用该目录下的 `cache/file-index.json`。
+索引和查询在后台执行，快速更换关键词、索引范围或后端会取消旧任务，旧结果不会覆盖当前结果。内置、rg 和 fd 后端运行期间按“设置 → 自动刷新”中保存的间隔（默认 30 分钟）以及进入文件搜索时会自动在后台刷新索引，刷新期间仍可使用已有结果。文件增删后，也可在文件搜索模式按 **Ctrl + R**、点击右下角刷新，或在设置中点击“重建索引”。设置中的“清空索引缓存”会取消当前索引任务并清除内存及磁盘索引，但保留已保存的目录；下次进入文件搜索或定时刷新时会重新建立。重建采用已保存的范围，尚未保存的编辑需点击“保存并重建索引”。当前未接入实时文件变更监听。索引缓存位于 macOS 的 `~/Library/Caches/TakeAPanel/file-index.json`、Windows 的 `%LOCALAPPDATA%/TakeAPanel/cache/file-index.json`，Linux 的 `$XDG_CACHE_HOME/take-a-panel/file-index.json`（默认 `~/.cache/take-a-panel/file-index.json`）；设置 `TAKE_A_PANEL_CONFIG_DIR` 时使用该目录下的 `cache/file-index.json`。
 
 ## 平台支持
 
