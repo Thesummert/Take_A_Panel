@@ -530,12 +530,18 @@ impl Controller {
         ui.set_error_message("".into());
         let _ = ui.hide();
         let sender = self.sender.clone();
+        let backend = self.backend.borrow().clone();
         std::thread::spawn(move || {
             let result = if reveal {
                 super::reveal::reveal(&path)
             } else {
                 super::open(&path)
             };
+            if result.is_ok() && !reveal && backend.kind == Kind::Everything {
+                if let Err(error) = backend::record_everything_launch(&backend, &path) {
+                    eprintln!("Failed to update Everything run count: {error:#}");
+                }
+            }
             let _ = sender.send(Event::Opened(result));
         });
         self.start_pump();

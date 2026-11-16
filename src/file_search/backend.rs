@@ -267,11 +267,7 @@ pub fn everything(
     revision: &AtomicU64,
     generation: u64,
 ) -> Result<Option<Index>> {
-    let mut command = Command::new(backend.everything_program()?);
-    // TXT output redirected to a pipe is UTF-8.
-    // -search consumes the query as a value, including leading switches.
-    command.args(["-n", "200", "-txt", "-timeout", "1000", "-search"]);
-    command.arg(query);
+    let command = everything_command(backend, query)?;
     let mut index = Index::default();
     let complete = run(command, b'\n', false, revision, generation, |bytes| {
         let path = path_from_bytes(bytes);
@@ -284,10 +280,74 @@ pub fn everything(
     Ok(complete.then_some(index))
 }
 
+fn everything_command(backend: &Backend, query: &str) -> Result<Command> {
+    let mut command = Command::new(backend.everything_program()?);
+    // Keep the search text a single argument, even when it starts with '-'.
+    command.args([
+        "-n",
+        "200",
+        "-txt",
+        "-timeout",
+        "1000",
+        "-sort",
+        "run-count-descending",
+        "-search",
+    ]);
+    command.arg(query);
+    Ok(command)
+}
+
+// Keep Everything's run history in sync with successful launches from this panel.
+pub fn record_everything_launch(backend: &Backend, path: &Path) -> Result<()> {
+    let mut command = Command::new(backend.everything_program()?);
+    command.arg("-inc-run-count").arg(path);
+    command.stdout(Stdio::null()).stderr(Stdio::null());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x08000000);
+    }
+    let status = command
+        .status()
+        .context("Failed to update Everything run count")?;
+    anyhow::ensure!(
+        status.success(),
+        "Failed to update Everything run count ({status})"
+    );
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::file_search::test_support::TempDir;
+
+    #[test]
+    fn everything_requests_run_count_order_before_limiting_results() {
+        let backend = Backend {
+            kind: Kind::Everything,
+            executable: "es.exe".into(),
+        };
+        let command = everything_command(&backend, "-foo bar").unwrap();
+        let args: Vec<_> = command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(
+            args,
+            [
+                "-n",
+                "200",
+                "-txt",
+                "-timeout",
+                "1000",
+                "-sort",
+                "run-count-descending",
+                "-search",
+                "-foo bar"
+            ]
+        );
+    }
 
     #[test]
     fn everything_gui_path_uses_sibling_cli_instead() {
@@ -400,7 +460,7 @@ mod tests {
         let file = root.0.join("报告.txt");
         std::fs::write(&file, "data").unwrap();
         let script = root.0.join("es");
-        std::fs::write(&script, format!("#!/bin/sh\n[ \"$6\" = '-search' ] || exit 3\n[ \"$7\" = '-foo bar' ] || exit 4\nprintf '%s\\n' '{}'\n", file.display())).unwrap();
+        std::fs::write(&script, format!("#!/bin/sh\n[ \"$6\" = '-sort' ] || exit 3\n[ \"$7\" = 'run-count-descending' ] || exit 4\n[ \"$8\" = '-search' ] || exit 5\n[ \"$9\" = '-foo bar' ] || exit 6\nprintf '%s\\n' '{}'\n", file.display())).unwrap();
         std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
         let backend = Backend {
             kind: Kind::Everything,

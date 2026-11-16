@@ -51,13 +51,25 @@ impl Drop for DeviceContext {
     }
 }
 
+// Shell parsing names require Windows separators even though filesystem APIs
+// accept paths containing '/'. Preserve non-Unicode paths while normalizing.
+fn shell_file_path(path: &std::path::Path) -> Vec<u16> {
+    path.as_os_str()
+        .encode_wide()
+        .map(|ch| if ch == b'/' as u16 { b'\\' as u16 } else { ch })
+        .chain(Some(0))
+        .collect()
+}
+
 pub fn load(app: &Application) -> Option<IconData> {
     let _apartment = Apartment::new()?;
-    let path: OsString = match &app.target {
-        LaunchTarget::File(path) => path.as_os_str().to_owned(),
-        LaunchTarget::AppId(id) => format!("shell:AppsFolder\\{id}").into(),
+    let path: Vec<u16> = match &app.target {
+        LaunchTarget::File(path) => shell_file_path(path),
+        LaunchTarget::AppId(id) => {
+            let path: OsString = format!("shell:AppsFolder\\{id}").into();
+            path.encode_wide().chain(Some(0)).collect()
+        }
     };
-    let path: Vec<u16> = path.encode_wide().chain(Some(0)).collect();
     // Shell item factories resolve both .lnk targets and UWP/Store app icons.
     let factory: IShellItemImageFactory =
         unsafe { SHCreateItemFromParsingName(PCWSTR(path.as_ptr()), None) }.ok()?;
@@ -138,4 +150,20 @@ pub fn load(app: &Application) -> Option<IconData> {
         ),
         premultiplied: true,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shell_file_paths_use_windows_separators() {
+        let actual = shell_file_path(std::path::Path::new(
+            "C:\\ProgramData/Microsoft/程序/Zen.lnk",
+        ));
+        let expected: Vec<u16> = "C:\\ProgramData\\Microsoft\\程序\\Zen.lnk\0"
+            .encode_utf16()
+            .collect();
+        assert_eq!(actual, expected);
+    }
 }
