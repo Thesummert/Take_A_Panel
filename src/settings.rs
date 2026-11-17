@@ -1,5 +1,5 @@
+use crate::shortcuts::parse_hotkey;
 use anyhow::{Context, Result, bail};
-use global_hotkey::hotkey::HotKey;
 use std::collections::BTreeMap;
 use std::{io::Write, path::PathBuf};
 
@@ -169,7 +169,7 @@ impl Settings {
         match std::fs::read_to_string(self.directory.join("hotkey")) {
             Ok(value) => {
                 let value = value.trim();
-                value.parse::<HotKey>().context("已保存的快捷键格式错误")?;
+                parse_hotkey(value).context("已保存的快捷键格式错误")?;
                 Ok(Some(value.into()))
             }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
@@ -178,7 +178,7 @@ impl Settings {
     }
 
     pub fn save_hotkey(&self, value: &str) -> Result<()> {
-        value.parse::<HotKey>().context("快捷键格式错误")?;
+        parse_hotkey(value).context("快捷键格式错误")?;
         self.save_text("hotkey", value)
             .context("无法保存快捷键设置")
     }
@@ -379,6 +379,17 @@ mod tests {
             Some("Ctrl+Alt+Space")
         );
         assert_eq!(std::fs::read_dir(&path).unwrap().count(), 1);
+        #[cfg(target_os = "windows")]
+        {
+            settings.save_hotkey("Win+Space").unwrap();
+            assert_eq!(
+                Settings::new(path.clone())
+                    .load_hotkey()
+                    .unwrap()
+                    .as_deref(),
+                Some("Win+Space")
+            );
+        }
         std::fs::write(path.join("hotkey"), "invalid").unwrap();
         assert!(settings.load_hotkey().is_err());
         std::fs::remove_dir_all(path).unwrap();

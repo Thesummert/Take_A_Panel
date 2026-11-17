@@ -1,5 +1,6 @@
 use crate::LauncherWindow;
-use global_hotkey::hotkey::{HotKey, Modifiers};
+use crate::shortcuts::parse_hotkey;
+use global_hotkey::hotkey::Modifiers;
 use slint::{ComponentHandle, platform::Key, winit_030::winit::keyboard};
 
 pub fn bind(ui: &LauncherWindow) {
@@ -130,7 +131,14 @@ fn record(ui: &LauncherWindow, key: &str, modifiers: Modifiers) {
         (Modifiers::CONTROL, "Ctrl"),
         (Modifiers::ALT, "Alt"),
         (Modifiers::SHIFT, "Shift"),
-        (Modifiers::SUPER, "Super"),
+        (
+            Modifiers::SUPER,
+            if cfg!(target_os = "windows") {
+                "Win"
+            } else {
+                "Super"
+            },
+        ),
     ] {
         if modifiers.contains(modifier) {
             parts.push(name);
@@ -142,7 +150,7 @@ fn record(ui: &LauncherWindow, key: &str, modifiers: Modifiers) {
         .unwrap_or(key);
     parts.push(key);
     let value = parts.join("+");
-    if value.parse::<HotKey>().is_err() {
+    if parse_hotkey(&value).is_err() {
         ui.set_settings_failed(true);
         ui.set_settings_message("暂不支持这个按键，请尝试其他组合键。".into());
         return;

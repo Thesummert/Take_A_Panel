@@ -39,7 +39,7 @@ Windows / Linux 启动项记录当前可执行文件的路径，移动程序后�
 在快捷键设置中点击录入区域，直接按下实际的组合键，例如按住 Ctrl 和 Alt 后按空格，便会显示 `Ctrl+Alt+Space`，无需输入组合键名称。支持字母、数字、空格、方向键、功能键等，按键按物理位置识别，macOS Option 产生的特殊字符不会影响录入。仅按修饰键不会覆盖组合键；录入当前已启用的快捷键不会隐藏面板。点击“保存快捷键”或按 Enter 即可立即生效，并在下次启动时继续使用。“恢复默认”会填入 `Ctrl+Alt+Space`，点击保存后生效；按 Esc 或“返回面板”放弃未保存的修改。与面板内操作冲突、被其他程序占用或保存失败时显示错误，并保留原快捷键。页面同时列出面板内的固定快捷键供查阅。
 
 ```sh
-# 自定义全局快捷键
+# 自定义全局快捷键（Windows 也支持 Win+Space、Ctrl+Win+K 等写法）
 cargo run --release -- --hotkey "Alt+Space"
 
 # 只启动或复用后台 server，不显示面板；命令会立即返回
@@ -66,6 +66,8 @@ cargo run --release -- --no-hotkey
 也可以设置环境变量 `TAKE_A_PANEL_HOTKEY`。启动时优先级为：命令行 `--hotkey` > `TAKE_A_PANEL_HOTKEY` > 设置页保存的快捷键 > 默认值。命令行和环境变量只在创建 server 时生效，已有 server 时复用原配置；设置页可以直接修改运行中的快捷键，无需重启。`--no-hotkey` 只禁用本次启动的快捷键，之后也可以在设置页保存组合键来启用。快捷键已占用时仍可从 P 菜单或命令行显示面板。
 
 快捷键设置保存在 macOS 的 `~/Library/Application Support/TakeAPanel/hotkey`、Windows 的 `%APPDATA%/TakeAPanel/hotkey`、Linux 的 `$XDG_CONFIG_HOME/take-a-panel/hotkey`（默认 `~/.config/take-a-panel/hotkey`）。可通过 `TAKE_A_PANEL_CONFIG_DIR` 指定独立设置目录。
+
+Windows 设置为 `Win+Space` 后，程序运行期间会拦截这组按键，只切换面板，不触发系统输入语言切换；长按只触发一次。切换为其他快捷键或退出程序后，自动恢复系统处理。其他带 Win 的组合键仍使用普通全局快捷键注册。
 
 `--server` 在已有 server 时直接返回，不会创建第二个 server。`--show`、`--toggle` 和 `--hidden` 可以自动启动 server；`--hide`、`--refresh`、`--status` 和 `--quit` 不会自动启动 server。关闭终端不会停止自动启动的后台进程，退出请使用 P 菜单、`Ctrl + Q` 或 `--quit`。
 
@@ -290,7 +292,7 @@ cargo build --locked --release
 
 目前已在 macOS 上完成构建与测试。Windows、Linux 的原生窗口焦点和全局快捷键仍需在对应桌面环境下验证。
 
-macOS 上 `cargo test --locked` 还会在主线程运行原生快捷键回归测试，临时注册并释放 `Ctrl+Alt+Shift+Super+F13/F14`，验证连续切换、保存、保存失败回退和重新初始化。该测试需要允许注册系统全局快捷键，配置仅写入临时目录。
+macOS 和 Windows 上 `cargo test --locked` 还会在主线程运行原生快捷键回归测试，临时注册并释放 `Ctrl+Alt+Shift+Super+F13/F14`（Windows 使用 `Win`），验证连续切换、保存、保存失败回退和重新初始化。该测试需要允许注册系统全局快捷键，配置仅写入临时目录。
 
 ```text
 src/main.rs          窗口生命周期、全局快捷键、后台任务、交互绑定

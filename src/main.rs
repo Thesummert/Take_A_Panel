@@ -1319,31 +1319,33 @@ fn register_hotkey(
     let weak = ui.as_weak();
     // The global handler can be installed only once. Read the current ID so
     // changes and enabling a shortcut after --no-hotkey take effect immediately.
-    GlobalHotKeyEvent::set_event_handler(Some(move |event: GlobalHotKeyEvent| {
-        if active_id.load(Ordering::Acquire) != u64::from(event.id) + 1
-            || event.state != HotKeyState::Pressed
-        {
-            return;
-        }
-        let focus = focus.clone();
-        let active_id = active_id.clone();
-        let _ = weak.upgrade_in_event_loop(move |ui| {
-            if active_id.load(Ordering::Acquire) != u64::from(event.id) + 1 {
+    shortcuts
+        .borrow_mut()
+        .set_event_handler(move |event: GlobalHotKeyEvent| {
+            if active_id.load(Ordering::Acquire) != u64::from(event.id) + 1
+                || event.state != HotKeyState::Pressed
+            {
                 return;
             }
-            if ui.window().is_visible() && ui.get_shortcut_recording() {
-                ui.set_shortcut_draft(ui.get_configured_hotkey());
-                ui.set_settings_failed(false);
-                ui.set_settings_message("已录入，点击“保存快捷键”生效。".into());
-                return;
-            }
-            if ui.window().is_visible() {
-                let _ = ui.hide();
-            } else {
-                present(&ui, true, &focus);
-            }
+            let focus = focus.clone();
+            let active_id = active_id.clone();
+            let _ = weak.upgrade_in_event_loop(move |ui| {
+                if active_id.load(Ordering::Acquire) != u64::from(event.id) + 1 {
+                    return;
+                }
+                if ui.window().is_visible() && ui.get_shortcut_recording() {
+                    ui.set_shortcut_draft(ui.get_configured_hotkey());
+                    ui.set_settings_failed(false);
+                    ui.set_settings_message("已录入，点击“保存快捷键”生效。".into());
+                    return;
+                }
+                if ui.window().is_visible() {
+                    let _ = ui.hide();
+                } else {
+                    present(&ui, true, &focus);
+                }
+            });
         });
-    }));
     if options.no_hotkey {
         return (
             shortcuts,

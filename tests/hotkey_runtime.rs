@@ -1,16 +1,19 @@
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 // This standalone harness doesn't collect the imported modules' unit tests.
 #[allow(dead_code, unused_imports)]
 #[path = "../src/settings.rs"]
 mod settings;
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 #[allow(unused_imports)]
 #[path = "../src/shortcuts.rs"]
 mod shortcuts;
+#[cfg(target_os = "windows")]
+#[path = "support/windows_hotkey.rs"]
+mod windows_hotkey;
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 fn main() -> anyhow::Result<()> {
-    use global_hotkey::hotkey::HotKey;
+    use shortcuts::parse_hotkey;
     use std::sync::atomic::Ordering;
 
     let mut random = [0; 8];
@@ -23,8 +26,11 @@ fn main() -> anyhow::Result<()> {
     let result = (|| -> anyhow::Result<()> {
         let mut shortcuts = shortcuts::Shortcuts::default();
         // Unusual combinations avoid taking over shortcuts used by applications.
-        let first = "Ctrl+Alt+Shift+Super+F13";
-        let second = "Ctrl+Alt+Shift+Super+F14";
+        let (first, second) = if cfg!(target_os = "windows") {
+            ("Ctrl+Alt+Shift+Win+F13", "Ctrl+Alt+Shift+Win+F14")
+        } else {
+            ("Ctrl+Alt+Shift+Super+F13", "Ctrl+Alt+Shift+Super+F14")
+        };
         shortcuts.apply(first, || settings.save_hotkey(first))?;
         assert!(shortcuts.enabled());
 
@@ -35,7 +41,7 @@ fn main() -> anyhow::Result<()> {
         assert_eq!(settings.load_hotkey()?.as_deref(), Some(second));
         assert_eq!(
             shortcuts.active_id.load(Ordering::Acquire),
-            u64::from(second.parse::<HotKey>()?.id()) + 1
+            u64::from(parse_hotkey(second)?.id()) + 1
         );
         // Saving the active key and switching back must both succeed.
         shortcuts.apply(second, || settings.save_hotkey(second))?;
@@ -49,7 +55,7 @@ fn main() -> anyhow::Result<()> {
         assert_eq!(settings.load_hotkey()?.as_deref(), Some(first));
         assert_eq!(
             shortcuts.active_id.load(Ordering::Acquire),
-            u64::from(first.parse::<HotKey>()?.id()) + 1
+            u64::from(parse_hotkey(first)?.id()) + 1
         );
         // A failed save must release the candidate so it can be retried.
         shortcuts.apply(second, || settings.save_hotkey(second))?;
@@ -64,11 +70,13 @@ fn main() -> anyhow::Result<()> {
         std::fs::remove_dir_all(directory)?;
     }
     result?;
-    println!("macOS hotkey switching, persistence, rollback, and restart: passed");
+    #[cfg(target_os = "windows")]
+    windows_hotkey::verify()?;
+    println!("native hotkey switching, persistence, rollback, and restart: passed");
     Ok(())
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 fn main() {
-    println!("macOS native hotkey regression test: skipped on this platform");
+    println!("native hotkey regression test: skipped on this platform");
 }

@@ -8,6 +8,8 @@ slint::include_modules!();
 
 #[path = "../src/shortcut_recorder.rs"]
 mod shortcut_recorder;
+#[path = "../src/shortcuts.rs"]
+mod shortcuts;
 
 fn key(ui: &LauncherWindow, text: slint::SharedString) {
     ui.window()
@@ -501,7 +503,15 @@ fn native_shortcut_recording_uses_physical_keys_and_waits_for_save() {
     for (key, modifiers, expected) in [
         (KeyCode::Space, Mods::CONTROL | Mods::ALT, "Ctrl+Alt+Space"),
         (KeyCode::KeyA, Mods::ALT, "Alt+A"),
-        (KeyCode::KeyK, Mods::SUPER | Mods::SHIFT, "Shift+Super+K"),
+        (
+            KeyCode::KeyK,
+            Mods::SUPER | Mods::SHIFT,
+            if cfg!(target_os = "windows") {
+                "Shift+Win+K"
+            } else {
+                "Shift+Super+K"
+            },
+        ),
         (KeyCode::Digit1, Mods::CONTROL | Mods::SHIFT, "Ctrl+Shift+1"),
         (
             KeyCode::Equal,
@@ -510,7 +520,24 @@ fn native_shortcut_recording_uses_physical_keys_and_waits_for_save() {
         ),
         (KeyCode::F12, Mods::ALT, "Alt+F12"),
         (KeyCode::Enter, Mods::CONTROL, "Ctrl+Enter"),
-        (KeyCode::ArrowLeft, Mods::SUPER, "Super+ArrowLeft"),
+        (
+            KeyCode::ArrowLeft,
+            Mods::SUPER,
+            if cfg!(target_os = "windows") {
+                "Win+ArrowLeft"
+            } else {
+                "Super+ArrowLeft"
+            },
+        ),
+        (
+            KeyCode::Space,
+            Mods::SUPER,
+            if cfg!(target_os = "windows") {
+                "Win+Space"
+            } else {
+                "Super+Space"
+            },
+        ),
         (KeyCode::NumpadAdd, Mods::CONTROL, "Ctrl+NumpadAdd"),
     ] {
         assert!(shortcut_recorder::capture_native(&ui, key, modifiers));
@@ -535,6 +562,13 @@ fn native_shortcut_recording_uses_physical_keys_and_waits_for_save() {
     shortcut_recorder::capture_native(&ui, KeyCode::IntlRo, Mods::CONTROL);
     assert!(ui.get_settings_failed());
     assert_eq!(ui.get_shortcut_draft(), "Ctrl+NumpadAdd");
+    #[cfg(target_os = "windows")]
+    {
+        ui.invoke_capture_shortcut("k".into(), true, false, true, true);
+        assert_eq!(ui.get_shortcut_draft(), "Ctrl+Shift+Win+K");
+        assert!(!ui.get_settings_failed());
+        assert_eq!(saves.get(), 0);
+    }
     shortcut_recorder::capture_native(&ui, KeyCode::Enter, Mods::empty());
     assert_eq!(saves.get(), 1);
     shortcut_recorder::capture_native(&ui, KeyCode::Escape, Mods::empty());
