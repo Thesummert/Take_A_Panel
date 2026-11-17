@@ -282,9 +282,11 @@ pub fn everything(
 
 fn everything_command(backend: &Backend, query: &str) -> Result<Command> {
     let mut command = Command::new(backend.everything_program()?);
+    // ES 1.1.0.35+ treats -n as a count: search filter, which truncates
+    // matches before run-count sorting. Limit the sorted viewport instead.
     // Keep the search text a single argument, even when it starts with '-'.
     command.args([
-        "-n",
+        "-max-results",
         "200",
         "-txt",
         "-timeout",
@@ -336,7 +338,7 @@ mod tests {
         assert_eq!(
             args,
             [
-                "-n",
+                "-max-results",
                 "200",
                 "-txt",
                 "-timeout",
@@ -392,6 +394,19 @@ mod tests {
                         .all(|entry| entry.path_lower.contains("-help"))
                 );
             }
+        }
+
+        // Excluding unused items must not change the most-used result. This
+        // catches ES count: filters cutting off popular files before sorting.
+        let used = everything(&backend, "runcount:>0", &revision, 1)
+            .unwrap()
+            .unwrap();
+        if let Some(most_used) = used.entries.first() {
+            let all = everything(&backend, "", &revision, 1).unwrap().unwrap();
+            assert_eq!(
+                all.entries.first().map(|entry| &entry.path),
+                Some(&most_used.path)
+            );
         }
     }
 
@@ -460,7 +475,7 @@ mod tests {
         let file = root.0.join("报告.txt");
         std::fs::write(&file, "data").unwrap();
         let script = root.0.join("es");
-        std::fs::write(&script, format!("#!/bin/sh\n[ \"$6\" = '-sort' ] || exit 3\n[ \"$7\" = 'run-count-descending' ] || exit 4\n[ \"$8\" = '-search' ] || exit 5\n[ \"$9\" = '-foo bar' ] || exit 6\nprintf '%s\\n' '{}'\n", file.display())).unwrap();
+        std::fs::write(&script, format!("#!/bin/sh\n[ \"$1\" = '-max-results' ] || exit 2\n[ \"$6\" = '-sort' ] || exit 3\n[ \"$7\" = 'run-count-descending' ] || exit 4\n[ \"$8\" = '-search' ] || exit 5\n[ \"$9\" = '-foo bar' ] || exit 6\nprintf '%s\\n' '{}'\n", file.display())).unwrap();
         std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
         let backend = Backend {
             kind: Kind::Everything,
